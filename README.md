@@ -15,15 +15,31 @@ Manual install: clone this repo and copy or symlink `skills/research-explainer` 
 
 ## Use
 
+The easiest start is to just ask:
+
+```
+/research-explainer                         # asks what you want to learn
+/research-explainer explain PPO to me       # plain language works
+```
+
+Or hand it a source directly:
+
 ```
 /research-explainer 1706.03762              # arXiv ID
 /research-explainer ~/papers/x.pdf          # local PDF
-/research-explainer "KV cache eviction"     # bare topic: searches, you pick
 /research-explainer <src> --add <url>       # extra sources
 /research-explainer <src> --depth deep      # quick (default), standard or deep
 ```
 
-It stops twice: once to show the planned tree and research budget before spending anything, and once at a deterministic verifier that must pass before anything is built. Output goes to `~/explainers/<slug>/` unless you name another folder.
+### How a run goes
+
+1. **Find the source.** A topic triggers a search, and you pick from 4 to 6 candidates. An arXiv ID, path or URL is used as is.
+2. **Probe what you know.** It asks whether you have experience with the topic, plus depth and image settings. If you say yes, it checks with 4 or 5 quick true-or-false statements about the actual content instead of trusting a self-rating. Gaps become prerequisite nodes, marked ⚡ so you can skip any it got wrong.
+3. **You pick extra resources.** It shows the planned tree and proposes named resources that fill your specific gaps: a tutorial for a missing prerequisite, the paper a claim leans on, a replication of a result. Each comes with what it adds and an estimated cost (about $1 each). Nothing beyond the source and one search is spent until you choose.
+4. **Research and write.** Subagents read only what you picked. The explanation is then written from the source and those resources.
+5. **Verify, then ship.** A deterministic checker (plain code, not a model) must pass before anything is built. You get a local page at `~/explainers/<slug>/` (or a folder you name) and, if connected to claude.ai, a published artifact.
+
+A quick run with no extra resources costs about $1.50 to $2.
 
 ## Requirements
 

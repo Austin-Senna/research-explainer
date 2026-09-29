@@ -7,12 +7,12 @@ description: Use when turning a paper, topic, or arXiv ID into an interactive HT
 
 ## Ground rules
 
-**Two gates, neither optional.** Phase 4 is the cost gate: show the tree and the fan-out budget
-and stop, before spending anything on research. Phase 7 is the quality gate: never build or
+**Two gates, neither optional.** Phase 4 is the cost gate: show the tree and the proposed
+resources with their costs, and stop before spending anything on research. Phase 7 is the quality gate: never build or
 publish a document that `verify.mjs` fails.
 
-**Depth defaults to `quick`** — no research subagents, no spend beyond reading the source.
-Research is opted into, never out of.
+**Depth defaults to `quick`**: no research subagents unless the user picks resources at the gate,
+and no spend beyond reading the source and one search. Research is opted into, never out of.
 
 **Never turn Phase 7 into an LLM judge.** It is deterministic Node code and costs nothing. That
 is deliberate.
@@ -33,13 +33,19 @@ is deliberate.
 ## Invocation
 
 ```
+/research-explainer                         # no argument → ask what to learn
 /research-explainer 1706.03762              # arXiv ID
 /research-explainer ~/papers/vllm.pdf       # local PDF
 /research-explainer https://…               # URL
 /research-explainer "KV cache eviction"     # bare topic → search, user picks
+/research-explainer explain PPO to me       # natural language → treated as a bare topic
 /research-explainer <src> --add <url> …     # extra sources
 /research-explainer <src> --depth deep      # skip the depth prompt
 ```
+
+With no argument, first ask what the user wants to learn, in one plain question, and wait. Treat
+the answer, like any natural-language request ("explain PPO to me", "help me understand KV
+caches"), as a bare topic: strip it to the subject before searching.
 
 An unambiguous handle (arXiv ID, DOI, path, URL) is used directly with no questions. A bare topic
 triggers a search and presents 4–6 candidates. Either way, print the final source set and let the
@@ -127,14 +133,31 @@ refresher by default**. When in doubt, include the scaffolding.
 The score sets **defaults**, never forks content.
 
 ### 4. Plan and gate
-Merge failed items into prereq nodes. Prune or extend the tree by depth. **Print the tree and the
-implied fan-out budget, then stop and wait.** Nothing has been spent yet.
+Merge failed items into prereq nodes. Prune or extend the tree by depth. Print the tree.
+
+**Then propose resources and let the user pick.** Run one search for named resources that close
+this reader's gaps: prerequisites they failed or were not probed on, and claims the source asserts
+without justification. Propose only resources that do something the source does not: a textbook
+chapter or tutorial for a prerequisite, the paper a claim leans on, a replication or critique of a
+result. Never propose one to re-explain what the source already explains well.
+
+Present them in one `AskUserQuestion` call, `multiSelect`, grouped into questions by purpose
+("fill prerequisites", "check the claims", "go further"). Each option is one resource: the label is
+its short name, the description says what it adds to *this* explainer and its estimated cost
+(about $1 per resource a subagent reads; more for a long paper). Size the list by depth: 2–4 for
+`quick`, up to 8 for `standard`, up to 12 for `deep`. The tool caps each question at 4 options, so
+leave out the weakest candidates rather than padding. Anything unpicked is dropped. If no pick is
+made, build from the source alone.
+
+**Stop and wait for the picks.** Nothing beyond reading the source and the one search has been
+spent yet.
 
 ### 5. Research fan-out
 Parallel subagents dispatched **in a single message**, on a mid-tier model such as Sonnet (or a
-small model such as Haiku for a prerequisite needing only a plain definition). Targets are restricted to
-prerequisites the reader failed and claims the source asserts without justification. Never fan
-out on material the source already explains well.
+small model such as Haiku for a prerequisite needing only a plain definition). Targets are exactly the
+resources the user picked at Phase 4, one resource per agent. Each agent reports what its
+resource says about the gap it was picked for, with locators. Add every picked resource to
+`meta.sources` as `supplementary` and its full text to `sources.json`.
 
 **Cap fetches per agent, not just output length.** Cumulative input across an agent's turns
 dominates the cost — six fetches means every later turn re-reads everything fetched so far.
@@ -194,11 +217,13 @@ sources are openly licensed. Viewers not signed in to Claude will not get the ch
 
 ## Depth dial
 
-| | Tree | Fan-out | Nodes | Adds | Approx cost |
+| | Tree | Resources offered | Nodes | Adds | Approx cost |
 |---|---|---|---|---|---|
-| **quick** (default) | ≤2 levels | none | 6–8 | core mechanism only | ~$1.50–2 |
-| **standard** | ≤3 levels | 3–5 agents | 10–15 | results, limitations | ~$4.50–6 |
-| **deep** | ≤4 levels | ≤10 agents | 18–25 | extensions, open questions, related work | ~$10–12 |
+| **quick** (default) | ≤2 levels | 2–4 | 6–8 | core mechanism only | ~$1.50–2 with no picks |
+| **standard** | ≤3 levels | ≤8 | 10–15 | results, limitations | ~$4.50–6 with 3–5 picks |
+| **deep** | ≤4 levels | ≤12 | 18–25 | extensions, open questions, related work | ~$10–12 with ~10 picks |
+
+Each pick adds or removes about $1.
 
 Depth 4 is the documented degradation point, so reach it only where the subject genuinely
 branches. Breadth is cheap; depth is expensive. 10–20 items per level is fine — any "no more than

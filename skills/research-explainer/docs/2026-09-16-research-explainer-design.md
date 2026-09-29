@@ -98,11 +98,15 @@ the return is in having two paths at all, not in routing sophistication.
 
 ### Phase 4 — Plan and gate
 Merge failed diagnostic items → prereq nodes. Prune/extend the candidate tree by depth.
-**Print the resulting tree and the implied fan-out budget, and stop.** Nothing has been spent
-on research yet. This is the only cost gate and it is not optional.
+**Print the resulting tree, propose named resources that close the reader's gaps, and stop.**
+Each proposal carries what it adds and an estimated cost, and the reader picks which to include.
+Nothing has been spent on research yet beyond one search. This is the only cost gate and it is not
+optional. A named list beats an abstract budget because the reader can judge "the PPO paper,
+~$1" but not "3 agents".
 
 ### Phase 5 — Research fan-out
-Parallel Sonnet subagents, dispatched in one message. Targets are restricted to:
+Parallel Sonnet subagents, dispatched in one message, one per resource the reader picked.
+Proposals at the gate are restricted to:
 - prerequisite concepts the reader failed the diagnostic on
 - claims the source asserts without justification
 
