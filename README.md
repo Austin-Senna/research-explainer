@@ -2,7 +2,9 @@
 
 A Claude Code plugin that turns a paper, arXiv ID or topic into an interactive explainer you learn from, not just read. It checks what you already know, adds prerequisite nodes for the gaps, explains each idea at three levels, quizzes you as you go, and publishes the result as a single HTML page (a Claude artifact, or a local file).
 
-![An explainer built from four 2026 papers on AI agents doing AI research](docs/screenshot.png)
+![Demo: scrolling an explainer built from four 2026 papers on AI agents doing AI research, answering a quiz question, then asking the side chat about the section in view](docs/demo.gif)
+
+*The explainer was built from four 2026 papers. In the demo you read a section, answer a check, move to a node with a paper figure, then ask the side chat about reward hacking. It answers from the sources and cites them. Recorded from a local build with the chat backed by Claude. On claude.ai the chat runs through the artifact viewer.*
 
 ## Install
 
@@ -12,6 +14,13 @@ claude plugin install research-explainer@research-explainer
 ```
 
 Manual install: clone this repo and copy or symlink `skills/research-explainer` into `~/.claude/skills/research-explainer`.
+
+## What it's for
+
+- **Exploring a topic.** You are new to a paper or field and want the map: what it claims, what you need to know first, and whether the claims hold up.
+- **Deepening one idea.** You know the basics and want one mechanism properly ("go deeper on PPO's clipping"). The tree stays narrow and goes several levels down, and it pulls in extra sources (the original derivation, a worked example, a critique) to explain that one thing from several angles.
+
+Say which you want in the request. It infers it otherwise, and asks if it can't tell.
 
 ## Use
 

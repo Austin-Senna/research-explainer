@@ -54,6 +54,18 @@ user add or drop before anything is spent.
 If a bare-topic search turns up no source of adequate quality, **stop and ask for one.** Do not
 build an explainer from your own recollection and present it as sourced.
 
+### Explore or deepen
+
+Read the request's intent; ask only if it is unclear.
+
+- **Explore** (the default: "help me learn X", a paper you have not read): a broad tree across the
+  topic, shaped by the depth dial.
+- **Deepen** ("go deeper on PPO's clipping", "I know the basics, explain why X works"): a narrow
+  tree around the one idea, with more levels under it and few siblings. Skip what the reader has
+  shown they know. At the Phase 4 gate, propose resources more widely than usual, since one
+  mechanism is best explained from several angles: the original derivation, a worked example, a
+  critique or ablation. The breadth goes into the sources, not the tree.
+
 ## The eight phases
 
 `<base>` is this skill's base directory, shown as "Base directory for this skill" when the skill
