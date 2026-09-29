@@ -1,0 +1,16 @@
+{
+  "name": "research-explainer",
+  "private": true,
+  "description": "Use when turning a paper, topic, or arXiv ID into an interactive HTML explainer to learn from - generating a tailored topic tree with prerequisite scaffolding, spiral explanations and retrieval quizzes. Triggers on \"explain this paper\", \"help me learn X\", \"make me an explainer\".",
+  "license": "MIT",
+  "repository": "github:Austin-Senna/research-explainer",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test \"test/*.test.mjs\"",
+    "verify": "node assets/verify.mjs",
+    "build": "node assets/build.mjs"
+  }
+}

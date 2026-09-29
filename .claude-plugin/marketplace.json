@@ -1,0 +1,15 @@
+{
+  "name": "research-explainer",
+  "description": "Single-plugin marketplace for research-explainer.",
+  "owner": {
+    "name": "Austin Senna",
+    "url": "https://github.com/Austin-Senna"
+  },
+  "plugins": [
+    {
+      "name": "research-explainer",
+      "source": "./",
+      "description": "Interactive explainers for research papers, built as Claude artifacts."
+    }
+  ]
+}

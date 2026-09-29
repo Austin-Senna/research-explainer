@@ -1,0 +1,8 @@
+We propose a new simple network architecture, the Transformer, based solely on
+attention mechanisms, dispensing with recurrence and convolutions entirely.
+We compute the dot products of the query with all keys, divide each by the square
+root of d_k, and apply a softmax function to obtain the weights on the values.
+We suspect that for large values of d_k, the dot products grow large in magnitude,
+pushing the softmax function into regions where it has extremely small gradients.
+Multi-head attention allows the model to jointly attend to information from
+different representation subspaces at different positions.

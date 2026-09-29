@@ -1,0 +1,362 @@
+{
+  "meta": {
+    "title": "Attention Is All You Need",
+    "slug": "attention-is-all-you-need",
+    "generatedAt": "2026-09-16T12:00:00Z",
+    "depth": "standard",
+    "claimSummary": "The paper claims sequence transduction needs no recurrence. It held up.",
+    "sources": [
+      {
+        "label": "Vaswani et al. 2017",
+        "url": "https://arxiv.org/abs/1706.03762",
+        "kind": "primary"
+      }
+    ],
+    "oversimplifications": [
+      {
+        "declaredIn": "scaled-dot-product",
+        "correctedIn": "multi-head",
+        "what": "pretending there is one head"
+      }
+    ]
+  },
+  "diagnostic": {
+    "items": [
+      {
+        "statement": "Softmax outputs sum to one.",
+        "truth": true,
+        "concept": "softmax"
+      },
+      {
+        "statement": "Positional encodings were learned in the original paper.",
+        "truth": false,
+        "concept": "positional-encoding"
+      }
+    ],
+    "results": [
+      {
+        "concept": "softmax",
+        "known": true
+      },
+      {
+        "concept": "positional-encoding",
+        "known": false
+      }
+    ]
+  },
+  "concepts": {
+    "dot-product": {
+      "introducedBy": "prereq-dot-product"
+    },
+    "positional-encoding": {
+      "introducedBy": "positional-encoding"
+    }
+  },
+  "nodes": [
+    {
+      "id": "prereq-dot-product",
+      "title": "Dot products",
+      "kind": "prereq",
+      "parent": null,
+      "order": 1,
+      "hook": "You need one operation before any of this makes sense.",
+      "assumes": [],
+      "spiral": {
+        "intuition": "A dot product asks how much two arrows point the same way.",
+        "concrete": "For [1,0] and [1,1] the dot product is 1.",
+        "formal": "a dot b equals the sum over i of a_i times b_i."
+      },
+      "wrongTurn": {
+        "belief": "If you are thinking a dot product measures distance",
+        "correction": "It measures alignment. Two long vectors pointing the same way score high even when far apart."
+      },
+      "diagram": null,
+      "quiz": {
+        "mcq": [
+          {
+            "stem": "What is the dot product of two orthogonal vectors?",
+            "options": [
+              {
+                "text": "Zero",
+                "correct": true,
+                "why": "Perpendicular vectors share no component along each other, so every term cancels."
+              },
+              {
+                "text": "One",
+                "correct": false,
+                "why": "One is a unit vector dotted with itself; orthogonality removes the aligned part entirely."
+              },
+              {
+                "text": "The product of their lengths",
+                "correct": false,
+                "why": "That is the value when the vectors point the same way, where the cosine is one, not zero."
+              }
+            ],
+            "explanation": "Orthogonal means no shared direction, so every term cancels and the sum is zero."
+          },
+          {
+            "stem": "What does a large positive dot product between two unit vectors indicate?",
+            "options": [
+              {
+                "text": "They point in similar directions",
+                "correct": true,
+                "why": "Alignment is exactly what the operation measures."
+              },
+              {
+                "text": "They are far apart in space",
+                "correct": false,
+                "why": "Plausible because both feel like similarity, but distance is a different operation; unit vectors are all the same length."
+              },
+              {
+                "text": "They have large magnitudes",
+                "correct": false,
+                "why": "Plausible in general, but these are unit vectors, so magnitude is fixed at one."
+              }
+            ],
+            "explanation": "For unit vectors the dot product is the cosine of the angle between them, so large positive means nearly parallel."
+          }
+        ],
+        "selfExplain": "Conceptualize in one sentence why alignment and distance are different questions.",
+        "selfExplainAnswer": "The dot product measures how much two vectors point the same way, so it is large when they align and zero when they are perpendicular."
+      },
+      "sources": [
+        {
+          "label": "Vaswani et al. 2017",
+          "url": "https://arxiv.org/abs/1706.03762",
+          "locator": "background"
+        }
+      ]
+    },
+    {
+      "id": "scaled-dot-product",
+      "title": "Scaled dot-product attention",
+      "kind": "core",
+      "parent": null,
+      "order": 2,
+      "hook": "Therefore the whole mechanism reduces to one weighted average.",
+      "assumes": [
+        "dot-product"
+      ],
+      "spiral": {
+        "intuition": "Every token asks every other token a question and gets a weighted answer back.",
+        "concrete": "With three tokens you compute nine scores, soften them into weights, and mix the values.",
+        "formal": "Attention of Q, K, V is softmax of Q K transpose over root d_k, times V."
+      },
+      "wrongTurn": {
+        "belief": "If you are thinking the scaling factor is there for numerical overflow",
+        "correction": "It is there because dot products of d_k-dimensional vectors have variance proportional to d_k, so the softmax saturates and gradients vanish."
+      },
+      "diagram": {
+        "svg": "<svg role=\"img\"></svg>",
+        "alt": "Q, K and V flowing through matmul, scale, softmax and matmul",
+        "cueCount": 6,
+        "kind": "dataflow"
+      },
+      "quiz": {
+        "mcq": [
+          {
+            "stem": "In attention, the scores QKᵀ are divided by the square root of what?",
+            "options": [
+              {
+                "text": "The key dimension d_k",
+                "correct": true,
+                "why": "Each score sums d_k products, so its variance grows with d_k and the square root undoes that."
+              },
+              {
+                "text": "The sequence length",
+                "correct": false,
+                "why": "Length sets how many scores there are, not how large each individual score grows."
+              },
+              {
+                "text": "The number of heads",
+                "correct": false,
+                "why": "Heads split the model width, but each head scales by its own key dimension."
+              }
+            ],
+            "explanation": "Queries are matched against keys, and the scale is the key dimension."
+          },
+          {
+            "stem": "Why is the score divided by the square root of the key dimension?",
+            "options": [
+              {
+                "text": "To keep the softmax out of its saturated region",
+                "correct": true,
+                "why": "Variance of the dot product grows with d_k, which flattens gradients once softmax saturates."
+              },
+              {
+                "text": "To normalize the attention weights so they sum to one",
+                "correct": false,
+                "why": "Genuinely tempting, but the softmax already guarantees that; the scaling happens before it."
+              },
+              {
+                "text": "To reduce the quadratic cost of attention",
+                "correct": false,
+                "why": "A real motivation for other attention variants, but a scalar divide changes no complexity."
+              }
+            ],
+            "explanation": "Large d_k inflates dot-product variance, pushing softmax into regions with very small gradients. Dividing by the square root holds the variance roughly constant."
+          }
+        ],
+        "selfExplain": "Conceptualize in one sentence what breaks if the scaling is removed.",
+        "selfExplainAnswer": "Dot products grow with the key dimension, and dividing by its square root keeps the scores in a range where softmax still spreads attention instead of saturating."
+      },
+      "sources": [
+        {
+          "label": "Vaswani et al. 2017",
+          "url": "https://arxiv.org/abs/1706.03762",
+          "locator": "3.2.1"
+        }
+      ]
+    },
+    {
+      "id": "multi-head",
+      "title": "Multi-head attention",
+      "kind": "core",
+      "parent": "scaled-dot-product",
+      "order": 3,
+      "hook": "But one attention pattern cannot represent several relationships at once.",
+      "assumes": [
+        "dot-product"
+      ],
+      "spiral": {
+        "intuition": "Run the whole thing several times in parallel and staple the answers together.",
+        "concrete": "Eight heads of 64 dimensions each reassemble into the same 512 you started with.",
+        "formal": "Concatenate the head outputs and apply one more learned projection."
+      },
+      "wrongTurn": {
+        "belief": "If you are thinking more heads means more parameters",
+        "correction": "The per-head dimension shrinks to compensate, so total cost is roughly unchanged."
+      },
+      "diagram": null,
+      "quiz": {
+        "mcq": [
+          {
+            "stem": "What happens to the head outputs before the final projection?",
+            "options": [
+              {
+                "text": "They are concatenated",
+                "correct": true,
+                "why": "Keeping them side by side lets the learned projection decide how to mix what each head found."
+              },
+              {
+                "text": "They are averaged",
+                "correct": false,
+                "why": "Averaging would blur what each head specialised in before any learned weighting sees it."
+              },
+              {
+                "text": "They are summed",
+                "correct": false,
+                "why": "Summing mixes the heads with fixed equal weights, which is the job the output projection learns instead."
+              }
+            ],
+            "explanation": "They are joined along the feature axis, restoring the model dimension."
+          },
+          {
+            "stem": "What does splitting attention across heads buy you?",
+            "options": [
+              {
+                "text": "Several relationship types represented at once",
+                "correct": true,
+                "why": "Each head can specialize in a different subspace."
+              },
+              {
+                "text": "Lower memory use during training",
+                "correct": false,
+                "why": "Understandable given the smaller per-head dimension, but the heads run in parallel so the total is comparable."
+              },
+              {
+                "text": "Longer effective context length",
+                "correct": false,
+                "why": "Plausible if you conflate heads with sequence position, but heads partition features, not positions."
+              }
+            ],
+            "explanation": "Each head projects into its own subspace, so different heads can attend on different criteria simultaneously."
+          }
+        ],
+        "selfExplain": "Conceptualize in one sentence why one head is not enough.",
+        "selfExplainAnswer": "Each head can attend to a different kind of relationship, and concatenating them lets the projection combine several views of the sequence at once."
+      },
+      "sources": [
+        {
+          "label": "Vaswani et al. 2017",
+          "url": "https://arxiv.org/abs/1706.03762",
+          "locator": "3.2.2"
+        }
+      ]
+    },
+    {
+      "id": "positional-encoding",
+      "title": "Positional encoding",
+      "kind": "extension",
+      "parent": null,
+      "order": 4,
+      "hook": "But attention alone is blind to order, so position has to be injected.",
+      "assumes": [],
+      "spiral": {
+        "intuition": "Attention sees a bag of tokens, so order must be added to the tokens themselves.",
+        "concrete": "Each position gets a fixed pattern of sines and cosines at different frequencies.",
+        "formal": "PE at position pos and dimension 2i is the sine of pos over 10000 to the 2i over d_model."
+      },
+      "wrongTurn": {
+        "belief": "If you are thinking the encodings are learned",
+        "correction": "The original paper used fixed sinusoids and reported that learned embeddings performed about the same."
+      },
+      "diagram": null,
+      "quiz": {
+        "mcq": [
+          {
+            "stem": "What kind of positional encodings did the original paper use?",
+            "options": [
+              {
+                "text": "Sinusoidal functions of position",
+                "correct": true,
+                "why": "The paper chose fixed sinusoids, hoping they extrapolate to lengths unseen in training."
+              },
+              {
+                "text": "Learned position embeddings",
+                "correct": false,
+                "why": "The paper tried learned embeddings and found them about equal, but kept sinusoids for extrapolation."
+              },
+              {
+                "text": "Relative position biases",
+                "correct": false,
+                "why": "Relative schemes arrived in later work; the original added absolute encodings to the input."
+              }
+            ],
+            "explanation": "Fixed sinusoids were chosen partly in the hope of extrapolating to longer sequences."
+          },
+          {
+            "stem": "Why does a transformer need positional information at all?",
+            "options": [
+              {
+                "text": "Self-attention is permutation-equivariant on its own",
+                "correct": true,
+                "why": "Shuffling the inputs shuffles the outputs identically, so order carries no signal."
+              },
+              {
+                "text": "Softmax cannot represent ordering",
+                "correct": false,
+                "why": "Tempting, but softmax is applied to scores; the missing order is upstream of it."
+              },
+              {
+                "text": "The residual connections discard order",
+                "correct": false,
+                "why": "Plausible-sounding, but residuals are elementwise and preserve whatever ordering exists."
+              }
+            ],
+            "explanation": "Attention computes a weighted sum over a set. Permute the inputs and you permute the outputs, so nothing in the operation encodes where a token sat."
+          }
+        ],
+        "selfExplain": "Conceptualize in one sentence what a transformer would confuse without positional encoding.",
+        "selfExplainAnswer": "Attention itself ignores order, so position has to be added to the inputs or every permutation of the sentence would look identical."
+      },
+      "sources": [
+        {
+          "label": "Vaswani et al. 2017",
+          "url": "https://arxiv.org/abs/1706.03762",
+          "locator": "3.5"
+        }
+      ]
+    }
+  ]
+}
