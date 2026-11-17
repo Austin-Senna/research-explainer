@@ -5,7 +5,7 @@
 // code: what counts as evidence, when a level moves, what the tutor does next, when an earlier
 // section comes back for review. A level can therefore never change because of how a reply was
 // phrased.
-import { nodeContext } from './ask.js';
+import { nodeContext, fitTurns, trimHistory, promptBudget } from './ask.js';
 import { linearOrder } from './tree.js';
 
 export const TUTOR_VARIANTS = ['panel', 'first', 'off'];
@@ -30,8 +30,10 @@ const MAX_SIDE_CONTEXT = 4000;
 const TUTOR_HISTORY_TURNS = 8;
 const TUTOR_EXCERPT_CHARS = 12000;
 
-const UNPROMPTED = new Set(['recall', 'defense', 'review']);
-const TUTOR_CHECKS = new Set(['recall', 'prompted', 'defense', 'review']);
+// A defense is not a check of its own: it is the same question, pushed on. Holding it marks the
+// answer it defended (`defended: true`) instead of adding a second, falsely independent check.
+const UNPROMPTED = new Set(['recall', 'review']);
+const TUTOR_CHECKS = new Set(['recall', 'prompted', 'review']);
 const PAGE_SIGNALS = new Set(['mcq', 'self']);
 const RESULTS = new Set(['correct', 'partial', 'wrong', 'offtopic']);
 
@@ -45,7 +47,7 @@ function clampLevel(n) {
 function normalizeSkill(s) {
   return {
     level: clampLevel(s?.level),
-    // Correct checks since the last level change: [{kind, teachable?}]
+    // Correct checks since the last level change: [{kind, teachable?, defended?}]
     evidence: Array.isArray(s?.evidence) ? s.evidence.filter(e => TUTOR_CHECKS.has(e?.kind) || PAGE_SIGNALS.has(e?.kind)) : [],
     strikes: Math.max(0, Number(s?.strikes) || 0), // failed attempts at the question now open
     told: Boolean(s?.told),                        // the answer was just given; the next right answer is not recall
@@ -113,7 +115,7 @@ export function canRaise(skill) {
   const pageCredit = skill.level < PAGE_SIGNAL_CEILING && skill.evidence.some(e => PAGE_SIGNALS.has(e.kind)) ? 1 : 0;
   if (unprompted.length < 1 || checks.length + pageCredit < CHECKS_TO_RAISE) return false;
   if (skill.level === MAX_LEVEL - 1) {
-    return checks.some(e => e.kind === 'defense') && checks.some(e => e.teachable);
+    return checks.some(e => e.defended) && checks.some(e => e.teachable);
   }
   return true;
 }
@@ -168,19 +170,30 @@ export function applyAssessment(tutor, assessment, { focus, order = [] } = {}) {
   skill.covered = true;
 
   if (assessment.result === 'correct') {
-    const kind = pending.kind === 'review' ? 'review'
-      : pending.kind === 'defense' ? 'defense'
-      : skill.told || skill.strikes > 0 ? 'prompted' : 'recall';
-    skill.evidence.push(assessment.teachable ? { kind, teachable: true } : { kind });
+    const prompted = skill.told || skill.strikes > 0;
     skill.strikes = 0;
     skill.told = false;
-    raiseIfEarned(skill, pending.node, changes);
-
-    if (kind === 'recall') {
-      next.rights += 1;
-      if (next.rights % DEVIL_EVERY === 0) {
-        return settle(next, { type: 'devil', node: pending.node, kind: 'defense' }, changes);
+    if (pending.kind === 'defense') {
+      // The answer held under pressure: it now counts as defended, and the raise it was waiting
+      // on (if any) can happen.
+      const held = skill.evidence.findLast(e => e.kind === 'recall');
+      if (held) {
+        held.defended = true;
+        if (assessment.teachable) held.teachable = true;
       }
+      raiseIfEarned(skill, pending.node, changes);
+    } else {
+      const kind = pending.kind === 'review' ? 'review'
+        : prompted ? 'prompted' : 'recall';
+      skill.evidence.push(assessment.teachable ? { kind, teachable: true } : { kind });
+      if (kind === 'recall') {
+        next.rights += 1;
+        // Pushed back on before it can count: no raise until the defense is in.
+        if (next.rights % DEVIL_EVERY === 0) {
+          return settle(next, { type: 'devil', node: pending.node, kind: 'defense' }, changes);
+        }
+      }
+      raiseIfEarned(skill, pending.node, changes);
     }
     const review = pickReview(next, order, focus);
     if (review) {
@@ -259,10 +272,16 @@ export function parseCommand(text) {
 //   - a self-explanation graded "solid": one check
 // Each is counted once per section, a second try at a question changes nothing, and neither can
 // raise a level alone, because neither is unprompted.
+// When the reader missed (a wrong option, a self-explanation short of "solid"), the page then shows
+// them the answer, so the section counts as just told: the tutor's next right answer on it is
+// prompted, not recall. Getting it right first is not being told.
 export function applyPageSignal(tutor, nodeId, signal) {
   const next = fork(tutor, nodeId);
   const skill = next.skills[nodeId];
   const changes = [];
+  if ((signal?.type === 'mcq' && !signal.correct) || (signal?.type === 'self' && signal.verdict !== 'solid')) {
+    skill.told = true;
+  }
   if (signal?.type === 'mcq') {
     if (!(signal.index in skill.mcqFirst)) skill.mcqFirst[signal.index] = Boolean(signal.correct);
     const firsts = Object.values(skill.mcqFirst);
@@ -429,24 +448,25 @@ export function moveDirective(move, { title = '', guess = '', question = '' } = 
 // thread; then the learner's message with the page's direction and any retrieved excerpts.
 export function tutorTurns(meta, target, history, learnerText, move, {
   catalog = '', excerpts = '', difficulty = 0, answered = null, guess = '', question = '',
+  maxBytes = promptBudget(),
 } = {}) {
   const side = answered && answered.id !== target.id
     ? `\n\n--- THE SECTION THEIR LAST ANSWER WAS ABOUT ---\n${nodeContext(meta, answered).slice(0, MAX_SIDE_CONTEXT)}\n--- END ---`
     : '';
-  const lead = {
-    role: 'user',
-    content: `${TUTOR_INSTRUCTIONS}\n\n--- THE SECTION ---\n${nodeContext(meta, target)}\n--- END OF SECTION ---${side}`
-      + (catalog ? `\n\n--- SOURCES (index, label, url) ---\n${catalog}\n--- END OF SOURCES ---` : ''),
-  };
-  const trimmed = (history ?? []).filter(t => t.role === 'user' || t.role === 'assistant')
-    .slice(-TUTOR_HISTORY_TURNS).map(({ role, content }) => ({ role, content }));
   const direction = `--- TUTOR DIRECTION (from the page, not the learner) ---\n`
     + `${moveDirective(move, { title: target.title, guess, question })}\n`
     + `Difficulty: ${DIFFICULTY_NOTES[difficulty] ?? DIFFICULTY_NOTES[0]}\n--- END OF DIRECTION ---`;
-  const tail = [String(learnerText ?? '').slice(0, MAX_ANSWER_CHARS), direction,
-    excerpts ? `--- SOURCE EXCERPTS ---\n${excerpts.slice(0, TUTOR_EXCERPT_CHARS)}\n--- END OF EXCERPTS ---` : '']
-    .filter(Boolean).join('\n\n');
-  return [lead, ...trimmed, { role: 'user', content: tail }];
+  return fitTurns(({ history, excerpts, context }) => {
+    const lead = {
+      role: 'user',
+      content: `${TUTOR_INSTRUCTIONS}\n\n--- THE SECTION ---\n${context}\n--- END OF SECTION ---${side}`
+        + (catalog ? `\n\n--- SOURCES (index, label, url) ---\n${catalog}\n--- END OF SOURCES ---` : ''),
+    };
+    const tail = [String(learnerText ?? '').slice(0, MAX_ANSWER_CHARS), direction,
+      excerpts ? `--- SOURCE EXCERPTS ---\n${excerpts.slice(0, TUTOR_EXCERPT_CHARS)}\n--- END OF EXCERPTS ---` : '']
+      .filter(Boolean).join('\n\n');
+    return [lead, ...history, { role: 'user', content: tail }];
+  }, { history: trimHistory(history, TUTOR_HISTORY_TURNS), excerpts, context: nodeContext(meta, target) }, maxBytes);
 }
 
 // The grading call. Its only output is a small JSON object, validated by validateAssessment.

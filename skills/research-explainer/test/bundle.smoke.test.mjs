@@ -28,12 +28,12 @@ function fakeDom(nodes) {
   return doc;
 }
 
-function runBundle(nodes) {
+function runBundle(nodes, tutor = null) {
   const src = bundle();
   const document = fakeDom(nodes);
   const errors = [];
   const win = {
-    NODES: nodes,
+    NODES: nodes, TUTOR: tutor,
     addEventListener() {}, scrollTo() {},
     matchMedia: () => ({ matches: false }),
     localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
@@ -61,4 +61,9 @@ test('the bundled page script evaluates without throwing', () => {
 
 test('the bundle survives a document with no nodes', () => {
   assert.doesNotThrow(() => runBundle({ meta: { slug: 'x' }, nodes: [] }));
+});
+
+test('the bundle evaluates in every tutor variant with no sample capability', () => {
+  const doc = JSON.parse(readFileSync(new URL('./fixtures/attention.nodes.json', import.meta.url)));
+  for (const mode of ['off', 'panel', 'first']) assert.doesNotThrow(() => runBundle(doc, mode), mode);
 });

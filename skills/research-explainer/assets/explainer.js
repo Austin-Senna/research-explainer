@@ -3,7 +3,7 @@ import { neighbors, linearOrder, ancestorsOf, isOpening } from './lib/tree.js';
 import { gradeMcq, recordAnswer, scheduleReasks } from './lib/quiz.js';
 import { createStore } from './lib/storage.js';
 import { renderSidebar, renderNode, renderMasthead, renderChat, renderProse, renderSkillMap, renderSaveState, escapeHtml } from './lib/render.js';
-import { nodeContext, buildTurns, essayPrompt, VERDICT_COPY, copyForError, isFatal, tierLabel, toolStatus, nextTier, appendTurns } from './lib/ask.js';
+import { nodeContext, buildTurns, promptBudget, essayPrompt, VERDICT_COPY, copyForError, isFatal, tierLabel, toolStatus, nextTier, appendTurns } from './lib/ask.js';
 import { chunkSources, searchChunks, formatExcerpts, catalog, sourceTools } from './lib/sources.js';
 import { nextReveal } from './lib/typing.js';
 // One import per line: the bundler strips imports line by line.
@@ -36,6 +36,7 @@ function start(doc) {
   let sampleFn = null;
   let mermaidLib = null; // loaded on first use; declared here for the same reason as sampleFn
   let toolsOk = false;
+  let maxBytes = promptBudget(); // lowered to fit this view once sample.limits() answers
   // One conversation across the whole document, saved in this browser: [{role, content, section?, sources?, tier?, note?}]
   state.chat = Array.isArray(state.chat) ? state.chat : [];
   state.modelTier ??= 'default';
@@ -68,6 +69,7 @@ function start(doc) {
       // Tools are only offered where this view can run them; limits() is local and free.
       const caps = await fn.limits?.().catch(() => null);
       toolsOk = Boolean(caps?.tools) && sources.length > 0;
+      maxBytes = promptBudget(caps?.maxPromptBytes);
       revealAsk();
     }).catch(() => {});
   }
@@ -637,6 +639,7 @@ function start(doc) {
         const turns = buildTurns(nodeContext(doc.meta, node), history, question, {
           catalog: catalog(sources),
           excerpts: formatExcerpts(hits),
+          maxBytes,
         });
         return {
           turns,
@@ -803,6 +806,7 @@ function start(doc) {
           answered: before.pending ? byId.get(before.pending.node) : null,
           guess: pretest?.guess,
           question: pretest?.question,
+          maxBytes,
         });
         return {
           turns,

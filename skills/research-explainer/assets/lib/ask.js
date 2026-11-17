@@ -1,7 +1,15 @@
 // "Ask about this" — pure helpers for the sample capability.
 // Everything here is testable without a browser; the DOM wiring lives in explainer.js.
 
-const MAX_PROMPT_BYTES = 200000; // the platform cap is 256 KiB of text; leave headroom for history
+// sample takes at most 64 KiB of text per call (sample.d.ts) and rejects prompt_too_large beyond
+// it, which this page treats as fatal. Every call is fitted under a budget below that cap; the page
+// lowers it further when sample.limits() reports a smaller maxPromptBytes.
+export const DEFAULT_PROMPT_BYTES = 64 * 1024;
+export function promptBudget(maxPromptBytes) {
+  const cap = Number(maxPromptBytes) > 0 ? Number(maxPromptBytes) : DEFAULT_PROMPT_BYTES;
+  return Math.floor(cap * 0.85); // headroom for the tool rounds that ride on a call
+}
+const MAX_SECTION_CHARS = 20000; // one section's text; real sections run 2-5k
 const MAX_EXCERPT_CHARS = 12000; // what retrieval may add to one question
 const MAX_HISTORY_TURNS = 8;    // drop oldest exchanges, never the instructions turn
 
@@ -49,7 +57,7 @@ export function nodeContext(meta, node) {
   const sources = (node.sources ?? [])
     .map(s => `- ${s.label}${s.locator ? `, ${s.locator}` : ''}${s.url ? ` <${s.url}>` : ''}`).join('\n');
   if (sources) parts.push('', 'This section was written from:', sources);
-  return parts.join('\n').slice(0, MAX_PROMPT_BYTES / 2);
+  return parts.join('\n').slice(0, MAX_SECTION_CHARS);
 }
 
 export const INSTRUCTIONS = [
@@ -66,20 +74,54 @@ export const INSTRUCTIONS = [
 
 // Turn list for the sample call: a standing instructions turn that is never dropped,
 // then the trimmed conversation, ending on the new question with its retrieved excerpts.
-export function buildTurns(context, history, question, { catalog = '', excerpts = '' } = {}) {
-  const lead = {
-    role: 'user',
-    content: `${INSTRUCTIONS}\n\n--- THE SECTION THEY ARE READING ---\n${context}\n--- END OF SECTION ---`
-      + (catalog ? `\n\n--- SOURCES (index, label, url) ---\n${catalog}\n--- END OF SOURCES ---` : ''),
-  };
-  // Threads also carry display-only fields (sources shown, tier used); Claude gets role and content.
-  const trimmed = history.slice(-MAX_HISTORY_TURNS).map(({ role, content }) => ({ role, content }));
-  // A turn list must start and end on a user turn; a leading assistant turn would be invalid.
+export function buildTurns(context, history, question, { catalog = '', excerpts = '', maxBytes = promptBudget() } = {}) {
+  return fitTurns(({ history, excerpts, context }) => {
+    const lead = {
+      role: 'user',
+      content: `${INSTRUCTIONS}\n\n--- THE SECTION THEY ARE READING ---\n${context}\n--- END OF SECTION ---`
+        + (catalog ? `\n\n--- SOURCES (index, label, url) ---\n${catalog}\n--- END OF SOURCES ---` : ''),
+    };
+    const tail = excerpts
+      ? `${question}\n\n--- SOURCE EXCERPTS MATCHING THIS QUESTION ---\n${excerpts.slice(0, MAX_EXCERPT_CHARS)}\n--- END OF EXCERPTS ---`
+      : question;
+    return [lead, ...history, { role: 'user', content: tail }];
+  }, { history: trimHistory(history), excerpts, context }, maxBytes);
+}
+
+// Threads also carry display-only fields (sources shown, tier used); Claude gets role and content.
+// A turn list must start and end on a user turn, so a leading assistant turn is dropped.
+export function trimHistory(history, turns = MAX_HISTORY_TURNS) {
+  const trimmed = (history ?? []).filter(t => t.role === 'user' || t.role === 'assistant')
+    .slice(-turns).map(({ role, content }) => ({ role, content }));
   while (trimmed.length && trimmed[0].role !== 'user') trimmed.shift();
-  const tail = excerpts
-    ? `${question}\n\n--- SOURCE EXCERPTS MATCHING THIS QUESTION ---\n${excerpts.slice(0, MAX_EXCERPT_CHARS)}\n--- END OF EXCERPTS ---`
-    : question;
-  return [lead, ...trimmed, { role: 'user', content: tail }];
+  return trimmed;
+}
+
+const encoder = new TextEncoder();
+export function turnsBytes(turns) {
+  return turns.reduce((n, t) => n + encoder.encode(t.content).length, 0);
+}
+
+// Shrink one call until it fits the byte budget, giving up what matters least first: the oldest
+// exchange (dropping to the next user turn, so the list still starts on one), then the retrieved
+// excerpts by halves, then the tail of the section text. The instructions and the new message are
+// never cut. `build` turns the three parts into a turn list.
+export function fitTurns(build, { history = [], excerpts = '', context = '' }, maxBytes) {
+  let turns = build({ history, excerpts, context });
+  while (turnsBytes(turns) > maxBytes && history.length) {
+    history = history.slice(1);
+    while (history.length && history[0].role !== 'user') history = history.slice(1);
+    turns = build({ history, excerpts, context });
+  }
+  while (turnsBytes(turns) > maxBytes && excerpts) {
+    excerpts = excerpts.length < 400 ? '' : excerpts.slice(0, Math.floor(excerpts.length / 2));
+    turns = build({ history, excerpts, context });
+  }
+  while (turnsBytes(turns) > maxBytes && context.length > 1000) {
+    context = context.slice(0, Math.floor(context.length * 0.75));
+    turns = build({ history, excerpts, context });
+  }
+  return turns;
 }
 
 // Spec §7.8: a self-explanation prompt earns feedback like any other question. Claude compares

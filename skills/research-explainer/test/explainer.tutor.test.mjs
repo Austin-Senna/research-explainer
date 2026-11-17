@@ -154,8 +154,23 @@ test('an answer abandoned under pressure loses the credit it earned', () => {
   assert.equal(levelOf(caved.tutor, A), 1, 'a failed defense takes the credit back, not the level');
 });
 
-test('a defended answer counts as an unprompted check', () => {
-  const pushed = run(createTutor(), A, [right, right, right]);
+test('a held defense marks the answer it defended and adds no second check', () => {
+  const pushed = run(createTutor(), A, [right, right, right]); // level 1, one recall banked, devil open
+  const held = applyAssessment(pushed.tutor, right, { focus: A, order: ids() });
+  assert.deepEqual(held.changes, [], 'one question pushed on is still one check');
+  assert.deepEqual(skillOf(held.tutor, A).evidence, [{ kind: 'recall', defended: true }]);
+  const next = applyAssessment(held.tutor, right, { focus: A, order: ids() });
+  assert.deepEqual(next.changes, [{ node: A, from: 1, to: 2 }], 'a second, independent question raises');
+});
+
+test('a raise waits on the defense: caving takes the credit back before it is spent', () => {
+  const at1 = createTutor({ skills: { [A]: { level: 1, evidence: [{ kind: 'prompted' }] } }, rights: 2 });
+  const pushed = run(at1, A, [right]); // this recall would raise, but it is the third: devil first
+  assert.equal(pushed.move.type, 'devil');
+  assert.deepEqual(pushed.changes, []);
+  const caved = applyAssessment(pushed.tutor, wrong, { focus: A, order: ids() });
+  assert.equal(levelOf(caved.tutor, A), 1);
+  assert.deepEqual(skillOf(caved.tutor, A).evidence, [{ kind: 'prompted' }]);
   const held = applyAssessment(pushed.tutor, right, { focus: A, order: ids() });
   assert.deepEqual(held.changes, [{ node: A, from: 1, to: 2 }]);
 });
@@ -163,8 +178,9 @@ test('a defended answer counts as an unprompted check', () => {
 test('level 5 needs a defended answer and a teachable one, not just two right answers', () => {
   const at4 = { level: 4, evidence: [{ kind: 'recall' }, { kind: 'recall' }], strikes: 0 };
   assert.equal(canRaise(at4), false);
-  assert.equal(canRaise({ ...at4, evidence: [{ kind: 'recall' }, { kind: 'defense' }] }), false);
-  assert.equal(canRaise({ ...at4, evidence: [{ kind: 'recall', teachable: true }, { kind: 'defense' }] }), true);
+  assert.equal(canRaise({ ...at4, evidence: [{ kind: 'recall', defended: true }, { kind: 'recall' }] }), false);
+  assert.equal(canRaise({ ...at4, evidence: [{ kind: 'recall', defended: true }, { kind: 'recall', teachable: true }] }), true);
+  assert.equal(canRaise({ ...at4, evidence: [{ kind: 'recall', defended: true, teachable: true }] }), false, 'still two checks');
   assert.equal(canRaise({ level: 5, evidence: at4.evidence }), false);
 });
 
@@ -436,4 +452,12 @@ test('the build command takes --tutor in any position and refuses an unknown val
   assert.match(readFileSync(join(dir, 'index.html'), 'utf8'), /window\.TUTOR = "panel"/);
   const bad = spawnSync(process.execPath, ['assets/build.mjs', fixture, dir, '--tutor', 'loud']);
   assert.equal(bad.status, 2);
+});
+
+test('an answer shown by the page quiz makes the next tutor answer prompted', () => {
+  const quizzed = applyPageSignal(createTutor(), A, { type: 'mcq', index: 0, correct: false, total: 2 }).tutor;
+  const step = run(quizzed, A, [right]);
+  assert.deepEqual(skillOf(step.tutor, A).evidence, [{ kind: 'prompted' }]);
+  const explained = applyPageSignal(createTutor(), A, { type: 'self', verdict: 'partial' }).tutor;
+  assert.equal(skillOf(explained, A).told, true);
 });

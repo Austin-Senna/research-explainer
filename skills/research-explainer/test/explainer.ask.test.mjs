@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { nodeContext, buildTurns, essayPrompt, copyForError, isFatal, INSTRUCTIONS, MODEL_TIERS, tierLabel, toolStatus, nextTier } from '../assets/lib/ask.js';
+import { nodeContext, buildTurns, promptBudget, turnsBytes, essayPrompt, copyForError, isFatal, INSTRUCTIONS, MODEL_TIERS, tierLabel, toolStatus, nextTier } from '../assets/lib/ask.js';
 
 const doc = () => JSON.parse(readFileSync(new URL('./fixtures/attention.nodes.json', import.meta.url)));
 const node = () => doc().nodes[1];
@@ -151,4 +151,24 @@ test('the instructions ask for scannable structure: bullets, nesting, subheading
   assert.match(INSTRUCTIONS, /indent two spaces to nest/);
   assert.match(INSTRUCTIONS, /"### " subheading/);
   assert.match(INSTRUCTIONS, /table/);
+});
+
+test('every call is fitted under the byte budget, dropping history, then excerpts, then section text', () => {
+  const big = 'x'.repeat(30000);
+  const history = Array.from({ length: 8 }, (_, i) => ({ role: i % 2 ? 'assistant' : 'user', content: big }));
+  const budget = promptBudget();
+  assert.ok(budget < 64 * 1024, 'the default stays under the 64 KiB sample cap');
+  const turns = buildTurns(big + big, history, 'why?', { excerpts: big, maxBytes: budget });
+  assert.ok(turnsBytes(turns) <= budget);
+  assert.equal(turns[0].role, 'user');
+  assert.equal(turns.at(-1).role, 'user');
+  assert.match(turns.at(-1).content, /^why\?/);
+  assert.match(turns[0].content, /THE SECTION THEY ARE READING/);
+  const small = buildTurns('short', history.slice(0, 2).map(t => ({ ...t, content: 'hi' })), 'q', { excerpts: 'e' });
+  assert.equal(small.length, 4, 'nothing is cut when it already fits');
+});
+
+test('the budget follows the view\'s reported limit', () => {
+  assert.equal(promptBudget(10000), 8500);
+  assert.equal(promptBudget(undefined), promptBudget());
 });
