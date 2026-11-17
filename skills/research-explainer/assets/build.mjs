@@ -14,6 +14,7 @@ const MODULES = [
   'lib/sources.js',
   'lib/typing.js',
   'lib/ask.js',
+  'lib/tutor.js',
   'lib/render.js',
   'explainer.js',
 ];
@@ -53,19 +54,30 @@ export function inlineFigures(doc, baseDir) {
 
 // `sources` is the full text of every source ([{label, url, text}]). A published page cannot
 // fetch, so this is the only way the chat can read them.
-export function buildHtml(doc, sources = null) {
+//
+// `tutor` picks the tutor's entry experience so the three can be compared: 'panel' (the default:
+// a mode in the chat panel), 'first' (each section opens with a prediction question) or 'off'.
+export const TUTOR_MODES = ['panel', 'first', 'off'];
+
+export function buildHtml(doc, sources = null, { tutor = 'panel' } = {}) {
+  if (!TUTOR_MODES.includes(tutor)) throw new Error(`--tutor must be one of ${TUTOR_MODES.join(', ')}; got ${tutor}`);
   return read('template.html')
     .replace('/*<!--INLINE:explainer.css-->*/', () => read('explainer.css'))
     .replace('/*<!--NODES-->*/ null', () => embedJson(doc))
     .replace('/*<!--SOURCES-->*/ null', () => embedJson(sources))
+    .replace('/*<!--TUTOR-->*/ null', () => embedJson(tutor))
     .replace('/*<!--INLINE:explainer.js-->*/', () => bundle())
     .replace('<title>Explainer</title>', `<title>${String(doc.meta?.title ?? 'Explainer').replace(/</g, '&lt;')}</title>`);
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
-  const [docPath, outDir] = process.argv.slice(2);
-  if (!docPath || !outDir) {
-    console.error('usage: node assets/build.mjs <nodes.json> <outDir>');
+  const args = process.argv.slice(2);
+  const flag = args.indexOf('--tutor');
+  const tutor = flag === -1 ? 'panel' : args[flag + 1];
+  if (flag !== -1) args.splice(flag, 2);
+  const [docPath, outDir] = args;
+  if (!docPath || !outDir || !TUTOR_MODES.includes(tutor)) {
+    console.error(`usage: node assets/build.mjs <nodes.json> <outDir> [--tutor ${TUTOR_MODES.join('|')}]`);
     process.exit(2);
   }
   const doc = inlineFigures(JSON.parse(readFileSync(docPath, 'utf8')), dirname(resolve(docPath)));
@@ -74,7 +86,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
   if (!sources) console.warn('no sources.json beside the nodes: the chat will only see section text');
   mkdirSync(outDir, { recursive: true });
   const out = `${outDir}/index.html`;
-  writeFileSync(out, buildHtml(doc, sources));
+  writeFileSync(out, buildHtml(doc, sources, { tutor }));
 
   // Raster figures extracted in Phase 1 sit beside the page and are referenced relatively.
   // When the build writes back into the source directory they are already in place, and
@@ -89,5 +101,5 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
       console.log('copied figures/');
     }
   }
-  console.log(`wrote ${out}`);
+  console.log(`wrote ${out} (tutor: ${tutor})`);
 }

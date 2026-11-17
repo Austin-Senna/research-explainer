@@ -26,8 +26,8 @@ is deliberate.
     for the Phase 6b visual check.
   - The Artifact tool (Claude Code connected to claude.ai) for publishing. Without it the result is
     the local `index.html`.
-- **Outside claude.ai:** the chat panel and essay grading use the claude.ai viewer's `sample`
-  capability and hide themselves when it is unavailable. Mermaid diagrams load from jsDelivr, so a
+- **Outside claude.ai:** the chat panel, the tutor and essay grading use the claude.ai viewer's
+  `sample` capability and hide themselves when it is unavailable. Mermaid diagrams load from jsDelivr, so a
   local file needs internet for them.
 
 ## Invocation
@@ -215,9 +215,33 @@ node <base>/assets/build.mjs <nodes.json> ~/explainers/<slug>
 ```
 Output defaults to `~/explainers/<slug>`; use another folder if the user names one.
 The build reads `sources.json` from beside `nodes.json` and warns if it is missing. Publish with
-`capabilities: {"sample": {}}`: the chat panel and the essay check both need it, and both hide
-themselves when it is unavailable. Open the local file, then publish the Artifact. Report both
+`capabilities: {"sample": {}}`: the chat panel, the tutor and the essay check all need it, and all
+hide themselves when it is unavailable. Open the local file, then publish the Artifact. Report both
 locations.
+
+**Tutor mode** is chosen at build time with `--tutor`, so the entry experiences can be compared:
+
+```bash
+node <base>/assets/build.mjs <nodes.json> <outDir> --tutor panel   # default
+node <base>/assets/build.mjs <nodes.json> <outDir> --tutor first
+node <base>/assets/build.mjs <nodes.json> <outDir> --tutor off
+```
+
+- `panel` (default): the page reads as before. The chat panel gains a second mode, Tutor, beside
+  Ask, and each section ends with an offer to be quizzed on it.
+- `first`: as `panel`, and each section opens with one prediction question in place of its body.
+  The reader answers or skips, the body appears, and the tutor follows up on the prediction. The
+  question is the section's first multiple-choice stem that reads without its options, so write
+  stems that stand alone.
+- `off`: no tutor.
+
+The tutor follows the `socratic-tutor` skill inside the page: one question at a time, a narrower
+question after a wrong answer, a direct explanation only after repeated misses, unannounced review
+of earlier sections. Every node is a subskill with a level from 0 to 5, shown in the sidebar and in
+the panel's skill map, and kept in the reader's browser. A level rises only after two right
+answers, one of them unprompted; a failed review lowers it. The page's own quiz counts for at most
+one of the two, and a prediction never counts. "Save state" copies a block to paste after
+`/socratic-tutor resume from:` in Claude Code. Without `sample` every variant is the plain page.
 
 ## Sharing
 
