@@ -117,7 +117,8 @@
           }
         ],
         "selfExplain": "Conceptualize in one sentence why alignment and distance are different questions.",
-        "selfExplainAnswer": "The dot product measures how much two vectors point the same way, so it is large when they align and zero when they are perpendicular."
+        "selfExplainAnswer": "The dot product measures how much two vectors point the same way, so it is large when they align and zero when they are perpendicular.",
+        "predict": "If you multiply two vectors element by element and add up the results, what would you expect that single number to say about how the vectors relate?"
       },
       "sources": [
         {
@@ -198,7 +199,8 @@
           }
         ],
         "selfExplain": "Conceptualize in one sentence what breaks if the scaling is removed.",
-        "selfExplainAnswer": "Dot products grow with the key dimension, and dividing by its square root keeps the scores in a range where softmax still spreads attention instead of saturating."
+        "selfExplainAnswer": "Dot products grow with the key dimension, and dividing by its square root keeps the scores in a range where softmax still spreads attention instead of saturating.",
+        "predict": "If every word gets to look at every other word and blend them, how might it decide how much of each one to take?"
       },
       "sources": [
         {
@@ -274,7 +276,8 @@
           }
         ],
         "selfExplain": "Conceptualize in one sentence why one head is not enough.",
-        "selfExplainAnswer": "Each head can attend to a different kind of relationship, and concatenating them lets the projection combine several views of the sequence at once."
+        "selfExplainAnswer": "Each head can attend to a different kind of relationship, and concatenating them lets the projection combine several views of the sequence at once.",
+        "predict": "If one attention pattern can only weight words one way at a time, what would you do so a word can attend to its subject and its object at once?"
       },
       "sources": [
         {
@@ -348,7 +351,8 @@
           }
         ],
         "selfExplain": "Conceptualize in one sentence what a transformer would confuse without positional encoding.",
-        "selfExplainAnswer": "Attention itself ignores order, so position has to be added to the inputs or every permutation of the sentence would look identical."
+        "selfExplainAnswer": "Attention itself ignores order, so position has to be added to the inputs or every permutation of the sentence would look identical.",
+        "predict": "If attention only compares word contents, what happens to the meaning of \"dog bites man\" versus \"man bites dog\"?"
       },
       "sources": [
         {

@@ -8,8 +8,8 @@
 import { nodeContext, fitTurns, trimHistory, promptBudget } from './ask.js';
 import { linearOrder } from './tree.js';
 
-export const TUTOR_VARIANTS = ['panel', 'first', 'off'];
-export function tutorVariant(value) { return TUTOR_VARIANTS.includes(value) ? value : 'panel'; }
+export const TUTOR_VARIANTS = ['first', 'panel', 'off'];
+export function tutorVariant(value) { return TUTOR_VARIANTS.includes(value) ? value : 'first'; }
 
 // socratic-tutor's scale, word for word.
 export const LEVEL_NAMES = [
@@ -299,11 +299,14 @@ export function applyPageSignal(tutor, nodeId, signal) {
 
 // --- Pretest (the tutor-first variant) ---
 
-// The prediction question comes from the section's own authored quiz, so it is on screen at once
-// with nothing sampled on load, and it is the question the reader will meet again after reading:
-// the pretesting effect is strongest for the very items pretested. Stems that only make sense
-// with their options in view are passed over.
+// The prediction question is authored (quiz.predict): one the reader can reason about from the
+// page's overview and the section's hook alone, aimed at the section's central claim, since the
+// pretesting effect lands on the item pretested. It is on screen at once, with nothing sampled on
+// load. Older documents without one fall back to the first MCQ stem that reads without its
+// options, which is often recall rather than prediction.
 export function pretestQuestion(node) {
+  const predict = String(node?.quiz?.predict ?? '').trim();
+  if (predict) return predict;
   const needsOptions = /\b(which of|following|these (options|statements)|select|choose)\b/i;
   const stem = (node?.quiz?.mcq ?? []).map(m => String(m?.stem ?? '').trim()).find(s => s && !needsOptions.test(s));
   if (stem) return stem;

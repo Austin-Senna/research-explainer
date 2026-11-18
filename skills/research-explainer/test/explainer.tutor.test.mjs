@@ -24,11 +24,11 @@ function run(start, id, verdicts, { focus = id, order = ids() } = {}) {
   return step;
 }
 
-test('the variant falls back to the panel for anything unknown', () => {
+test('the variant falls back to tutor-first for anything unknown', () => {
   assert.equal(tutorVariant('first'), 'first');
   assert.equal(tutorVariant('off'), 'off');
-  assert.equal(tutorVariant(undefined), 'panel');
-  assert.equal(tutorVariant('nonsense'), 'panel');
+  assert.equal(tutorVariant(undefined), 'first');
+  assert.equal(tutorVariant('nonsense'), 'first');
 });
 
 test('state restored from storage is normalized, whatever storage held', () => {
@@ -288,8 +288,9 @@ test('a pretest is asked once per section, skipping counts as done, and it can b
   assert.equal(needsPretest({ ...t, pretestOff: true }, B), false);
 });
 
-test('the pretest question comes from the section and avoids stems that need their options', () => {
-  const n = doc().nodes.find(x => x.id === A);
+test('without quiz.predict, the pretest falls back to a stem that reads without its options', () => {
+  const found = doc().nodes.find(x => x.id === A);
+  const n = { ...found, quiz: { ...found.quiz, predict: undefined } };
   assert.equal(pretestQuestion(n), n.quiz.mcq[0].stem);
   const needs = { ...n, quiz: { mcq: [{ stem: 'Which of the following is true?' }], selfExplain: 'Conceptualize in one sentence why scaling helps.' } };
   assert.equal(pretestQuestion(needs), 'Why scaling helps.');
@@ -432,9 +433,9 @@ test('the skill map and the save sheet render escaped', () => {
   assert.match(renderSaveState('Topic: <x>'), /Topic: &lt;x&gt;/);
 });
 
-test('the build embeds the chosen variant, defaults to the panel, and rejects anything else', () => {
-  assert.match(buildHtml(doc()), /window\.TUTOR = "panel"/);
-  assert.match(buildHtml(doc(), null, { tutor: 'first' }), /window\.TUTOR = "first"/);
+test('the build embeds the chosen variant, defaults to tutor-first, and rejects anything else', () => {
+  assert.match(buildHtml(doc()), /window\.TUTOR = "first"/);
+  assert.match(buildHtml(doc(), null, { tutor: 'panel' }), /window\.TUTOR = "panel"/);
   assert.match(buildHtml(doc(), null, { tutor: 'off' }), /window\.TUTOR = "off"/);
   assert.throws(() => buildHtml(doc(), null, { tutor: 'loud' }), /--tutor must be one of/);
 });
@@ -446,10 +447,10 @@ test('the build command takes --tutor in any position and refuses an unknown val
   const { join } = await import('node:path');
   const fixture = new URL('./fixtures/attention.nodes.json', import.meta.url).pathname;
   const dir = mkdtempSync(join(tmpdir(), 'explainer-tutor-'));
-  execFileSync(process.execPath, ['assets/build.mjs', '--tutor', 'first', fixture, dir]);
-  assert.match(readFileSync(join(dir, 'index.html'), 'utf8'), /window\.TUTOR = "first"/);
-  execFileSync(process.execPath, ['assets/build.mjs', fixture, dir]);
+  execFileSync(process.execPath, ['assets/build.mjs', '--tutor', 'panel', fixture, dir]);
   assert.match(readFileSync(join(dir, 'index.html'), 'utf8'), /window\.TUTOR = "panel"/);
+  execFileSync(process.execPath, ['assets/build.mjs', fixture, dir]);
+  assert.match(readFileSync(join(dir, 'index.html'), 'utf8'), /window\.TUTOR = "first"/);
   const bad = spawnSync(process.execPath, ['assets/build.mjs', fixture, dir, '--tutor', 'loud']);
   assert.equal(bad.status, 2);
 });
@@ -460,4 +461,11 @@ test('an answer shown by the page quiz makes the next tutor answer prompted', ()
   assert.deepEqual(skillOf(step.tutor, A).evidence, [{ kind: 'prompted' }]);
   const explained = applyPageSignal(createTutor(), A, { type: 'self', verdict: 'partial' }).tutor;
   assert.equal(skillOf(explained, A).told, true);
+});
+
+test('the opening prediction is the authored quiz.predict when there is one', () => {
+  const n = doc().nodes[1];
+  assert.equal(pretestQuestion(n), n.quiz.predict);
+  const legacy = { ...n, quiz: { ...n.quiz, predict: undefined } };
+  assert.equal(pretestQuestion(legacy), legacy.quiz.mcq[0].stem, 'older documents fall back to a stem');
 });

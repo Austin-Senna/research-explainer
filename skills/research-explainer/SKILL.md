@@ -222,17 +222,19 @@ locations.
 **Tutor mode** is chosen at build time with `--tutor`, so the entry experiences can be compared:
 
 ```bash
-node <base>/assets/build.mjs <nodes.json> <outDir> --tutor panel   # default
-node <base>/assets/build.mjs <nodes.json> <outDir> --tutor first
+node <base>/assets/build.mjs <nodes.json> <outDir> --tutor first   # default
+node <base>/assets/build.mjs <nodes.json> <outDir> --tutor panel
 node <base>/assets/build.mjs <nodes.json> <outDir> --tutor off
 ```
 
-- `panel` (default): the page reads as before. The chat panel gains a second mode, Tutor, beside
-  Ask, and each section ends with an offer to be quizzed on it.
-- `first`: as `panel`, and each section opens with one prediction question in place of its body.
-  The reader answers or skips, the body appears, and the tutor follows up on the prediction. The
-  question is the section's first multiple-choice stem that reads without its options, so write
-  stems that stand alone.
+- `first` (default): each section opens with its `quiz.predict` question in place of its body. The
+  reader answers or skips, the body appears, and the tutor follows up on the prediction. The chat
+  panel also has Tutor beside Ask. Write `predict` so the reader can reason to a guess from the
+  page's overview (`meta.claimSummary`) and the node's hook alone, aimed at the node's central
+  claim (authoring rules §7.10). Without it the page falls back to the first MCQ stem that reads
+  without its options, and the verifier warns `NO_PREDICT`.
+- `panel`: the page reads as before. The chat panel gains a second mode, Tutor, beside Ask, and
+  each section ends with an offer to be quizzed on it.
 - `off`: no tutor.
 
 The tutor follows the `socratic-tutor` skill inside the page: one question at a time, a narrower
@@ -296,7 +298,8 @@ branches. Breadth is cheap; depth is expensive. 10–20 items per level is fine 
     "quiz": {
       "mcq":   [{ "stem", "options": [{ "text", "correct", "why" }], "explanation" }],  // 1-3 per node, multiple choice only
       "selfExplain": "Conceptualize in one sentence why …",
-      "selfExplainAnswer": "the author's one-sentence model answer"  // required: Claude grades against it, and it is shown as feedback
+      "selfExplainAnswer": "the author's one-sentence model answer",  // required: Claude grades against it, and it is shown as feedback
+      "predict": "one question the reader can reason about from the overview and this node's hook alone?"  // opens the node in the default tutor; see authoring rules §7.10
     },
     "sources": [{ "label", "url", "locator": "§3.2.1" }]
   }]

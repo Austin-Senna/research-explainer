@@ -55,11 +55,12 @@ export function inlineFigures(doc, baseDir) {
 // `sources` is the full text of every source ([{label, url, text}]). A published page cannot
 // fetch, so this is the only way the chat can read them.
 //
-// `tutor` picks the tutor's entry experience so the three can be compared: 'panel' (the default:
-// a mode in the chat panel), 'first' (each section opens with a prediction question) or 'off'.
-export const TUTOR_MODES = ['panel', 'first', 'off'];
+// `tutor` picks the tutor's entry experience: 'first' (the default: each section opens with a
+// prediction question, then the tutor follows up), 'panel' (Tutor is only a mode in the chat
+// panel) or 'off'.
+export const TUTOR_MODES = ['first', 'panel', 'off'];
 
-export function buildHtml(doc, sources = null, { tutor = 'panel' } = {}) {
+export function buildHtml(doc, sources = null, { tutor = 'first' } = {}) {
   if (!TUTOR_MODES.includes(tutor)) throw new Error(`--tutor must be one of ${TUTOR_MODES.join(', ')}; got ${tutor}`);
   return read('template.html')
     .replace('/*<!--INLINE:explainer.css-->*/', () => read('explainer.css'))
@@ -73,7 +74,7 @@ export function buildHtml(doc, sources = null, { tutor = 'panel' } = {}) {
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
   const args = process.argv.slice(2);
   const flag = args.indexOf('--tutor');
-  const tutor = flag === -1 ? 'panel' : args[flag + 1];
+  const tutor = flag === -1 ? 'first' : args[flag + 1];
   if (flag !== -1) args.splice(flag, 2);
   const [docPath, outDir] = args;
   if (!docPath || !outDir || !TUTOR_MODES.includes(tutor)) {

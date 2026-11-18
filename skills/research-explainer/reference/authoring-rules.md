@@ -265,6 +265,14 @@ post-class 0.536. And narrow: **specific effect g = 0.54 on prequestioned conten
 g = 0.04 on everything else.** They don't help you learn the document; they help you learn the
 three facts you asked about.
 
+### 7.10 The opening prediction: reasoned from the overview, aimed at the central claim **[D] + [U]**
+The default tutor opens every node with `quiz.predict`. Given §7.9's narrow effect, it targets the
+node's central claim, never a side detail. And because the reader has only read the overview and
+the hook, it must be answerable by reasoning from those two, not by recall: "if you ran RL on a
+model that has only been pretrained, why might it learn almost nothing?", never "on RE-Bench at 32
+hours, how did experts compare?". One question, ending in "?", no options. A wrong guess is fine;
+the follow-up works from it.
+
 ---
 
 ## Diagrams

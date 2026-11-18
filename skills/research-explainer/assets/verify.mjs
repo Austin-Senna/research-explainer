@@ -74,6 +74,9 @@ export function checkQuizzes(doc, sourceText, errors) {
     if (q.selfExplain && !String(q.selfExplainAnswer ?? '').trim()) {
       err(errors, 'NO_MODEL_ANSWER', n.id, 'selfExplain has no selfExplainAnswer');
     }
+    if ('predict' in q && !(typeof q.predict === 'string' && q.predict.trim().endsWith('?'))) {
+      err(errors, 'BAD_PREDICT', n.id, 'quiz.predict must be a single question ending in "?"');
+    }
 
     if (locators.length === 0) {
       err(errors, 'UNGROUNDED', n.id, 'node has no source locator to ground its explanations');
@@ -169,6 +172,13 @@ function warn(list, code, nodeId, message) { list.push({ code, nodeId, message }
 
 export function checkWarnings(doc, warnings) {
   const nodes = [...(doc.nodes ?? [])].sort((a, b) => a.order - b.order);
+  // The default tutor opens each section with this question; without it the page falls back to
+  // an MCQ stem, which usually tests recall of the section rather than a prediction about it.
+  for (const n of nodes) {
+    if (!String(n.quiz?.predict ?? '').trim()) {
+      warn(warnings, 'NO_PREDICT', n.id, 'no quiz.predict; the opening question falls back to an MCQ stem');
+    }
+  }
 
   for (const n of nodes) {
     if (n.diagram && typeof n.diagram.cueCount === 'number' && n.diagram.cueCount > MAX_CUES) {
