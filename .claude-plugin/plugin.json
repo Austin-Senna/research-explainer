@@ -1,7 +1,7 @@
 {
   "name": "research-explainer",
-  "version": "1.1.0",
-  "description": "Turn a paper, arXiv ID or topic into an interactive explainer: prerequisite scaffolding, spiral explanations, multiple-choice checks, graded self-explanations, paper figures and diagrams, and a side chat that reads the sources.",
+  "version": "1.2.0",
+  "description": "Turn a paper, arXiv ID or topic into an interactive explainer: prerequisite scaffolding, spiral explanations, multiple-choice checks, graded self-explanations, paper figures and diagrams, a side chat that reads the sources, and a Socratic tutor that opens each section with a prediction question.",
   "author": { "name": "Austin Senna", "url": "https://github.com/Austin-Senna" },
   "homepage": "https://github.com/Austin-Senna/research-explainer",
   "repository": "https://github.com/Austin-Senna/research-explainer",
