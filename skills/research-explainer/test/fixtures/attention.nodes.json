@@ -154,6 +154,10 @@
           "url": "https://arxiv.org/abs/1706.03762",
           "locator": "3.2.1"
         }
+      ],
+      "central": true,
+      "supports": [
+        0
       ]
     },
     {
@@ -210,6 +214,10 @@
           "url": "https://arxiv.org/abs/1706.03762",
           "locator": "3.2.2"
         }
+      ],
+      "central": true,
+      "supports": [
+        0
       ]
     },
     {

@@ -36,7 +36,7 @@ const TUTOR_EXCERPT_CHARS = 12000;
 // answer it defended (`defended: true`) instead of adding a second, falsely independent check.
 const UNPROMPTED = new Set(['recall', 'review']);
 const TUTOR_CHECKS = new Set(['recall', 'prompted', 'review']);
-const PAGE_SIGNALS = new Set(['mcq', 'self']);
+const PAGE_SIGNALS = new Set(['mcq']);
 const RESULTS = new Set(['correct', 'partial', 'wrong', 'offtopic']);
 
 export const DIFFICULTY_LABELS = { '-2': 'much easier', '-1': 'easier', 0: 'normal', 1: 'harder', 2: 'much harder' };
@@ -57,7 +57,6 @@ function normalizeSkill(s) {
     covered: Boolean(s?.covered),
     mcqFirst: s?.mcqFirst && typeof s.mcqFirst === 'object' ? { ...s.mcqFirst } : {},
     mcqDone: Boolean(s?.mcqDone),
-    selfDone: Boolean(s?.selfDone),
   };
 }
 
@@ -93,13 +92,15 @@ function normalizeFinal(f) {
   return { done: false, queue };
 }
 
-// socratic-tutor keeps 4-10 subskills. The skill map is the core nodes: the paper itself.
-// Prerequisites and extensions can still be tutored on request, but they are not leveled toward
-// the target and never hold up the final assessment. A document with no core nodes (older
-// explainers) tracks every node.
+// socratic-tutor keeps a handful of subskills. The skill map is the central nodes: the ones the
+// paper's claims rest on (authoring rules §7.7), which are also the only ones quiz time asks
+// about. Older documents without `central` fall back to the core nodes, then to every node.
 export function trackedNodes(nodes) {
-  const core = linearOrder(nodes).filter(n => n.kind === 'core');
-  return core.length ? core : linearOrder(nodes);
+  const order = linearOrder(nodes);
+  const central = order.filter(n => n.central === true);
+  if (central.length) return central;
+  const core = order.filter(n => n.kind === 'core');
+  return core.length ? core : order;
 }
 
 // socratic-tutor places the learner before teaching. The explainer's Phase 3 diagnostic already
@@ -365,21 +366,15 @@ export function parseCommand(text) {
   return { harder: 'harder', easier: 'easier', 'just tell me': 'tell', 'show progress': 'progress', 'save state': 'save' }[t] ?? null;
 }
 
-// Signals the page already collects count as evidence, conservatively (see canRaise):
-//   - every multiple-choice question of a section right on the FIRST try: one check
-//   - a self-explanation graded "solid": one check
-// Each is counted once per section, a second try at a question changes nothing, and neither can
-// raise a level alone, because neither is unprompted.
-// When the reader missed (a wrong option, a self-explanation short of "solid"), the page then shows
-// them the answer, so the section counts as just told: the tutor's next right answer on it is
-// prompted, not recall. Getting it right first is not being told.
+// Quiz time's multiple choice counts as evidence, conservatively (see canRaise): every question
+// of a section right on the FIRST try is one check, counted once, and never the unprompted one,
+// so it cannot raise a level alone. A wrong pick shows the reader the answer, so the section
+// counts as just told: the tutor's next right answer on it is prompted, not recall.
 export function applyPageSignal(tutor, nodeId, signal) {
   const next = fork(tutor, nodeId);
   const skill = next.skills[nodeId];
   const changes = [];
-  if ((signal?.type === 'mcq' && !signal.correct) || (signal?.type === 'self' && signal.verdict !== 'solid')) {
-    skill.told = true;
-  }
+  if (signal?.type === 'mcq' && !signal.correct) skill.told = true;
   if (signal?.type === 'mcq') {
     if (!(signal.index in skill.mcqFirst)) skill.mcqFirst[signal.index] = Boolean(signal.correct);
     const firsts = Object.values(skill.mcqFirst);
@@ -387,9 +382,6 @@ export function applyPageSignal(tutor, nodeId, signal) {
       skill.mcqDone = true;
       skill.evidence.push({ kind: 'mcq' });
     }
-  } else if (signal?.type === 'self' && signal.verdict === 'solid' && !skill.selfDone) {
-    skill.selfDone = true;
-    skill.evidence.push({ kind: 'self' });
   }
   raiseIfEarned(skill, nodeId, changes);
   return { tutor: next, changes };
@@ -428,11 +420,14 @@ export function pretestMove(tutor, nodeId) {
 
 // --- Checkpoints ---
 //
-// The tutor runs inline, in a skippable "quiz time" block after each big section, not in the chat
-// panel. A big section is a run of consecutive top-level subtrees covering at least
-// CHECKPOINT_MIN tracked nodes; a short run at the end stands alone if it has two, and otherwise
-// joins the one before. The block sits at the end of the run's last node.
-export const CHECKPOINT_MIN = 3;
+// Quiz time is a skippable block after each big section. A big section is a run of consecutive
+// top-level subtrees covering at least CHECKPOINT_MIN tracked (central) nodes; a short run at the
+// end stands alone if it has two, and otherwise joins the one before. The block sits at the end
+// of the run's last node.
+export const CHECKPOINT_MIN = 2;
+// Quiz time asks the multiple-choice questions first (instant, no Claude), then this many
+// conversational questions, aimed at what the multiple choice showed was missed.
+export const TALK_PER_ROUND = 2;
 
 export function checkpointsFor(nodes) {
   const order = linearOrder(nodes);
@@ -460,7 +455,7 @@ export function checkpointsFor(nodes) {
   }
   if (run) {
     const prev = runs.at(-1);
-    if (run.nodes.length >= 2 || !prev) runs.push(run);
+    if (run.nodes.length >= CHECKPOINT_MIN || !prev) runs.push(run);
     else { prev.roots.push(...run.roots); prev.nodes.push(...run.nodes); prev.anchor = run.anchor; }
   }
   // The block lists the sections it covers, so the title only needs to be short.
@@ -470,40 +465,64 @@ export function checkpointsFor(nodes) {
   }));
 }
 
-// A round is one pass through a checkpoint: one question per section it covers, with the usual
-// follow-ups when an answer misses. `done` holds the sections answered right in this round.
+// A round is one pass through a checkpoint: the multiple choice (`mcq`: first answer per section,
+// right or wrong), then a short conversation on `targets`, with the usual follow-ups when an
+// answer misses. `done` holds the targets answered right in this round.
 export function createRound(saved) {
   const r = saved && typeof saved === 'object' ? saved : {};
+  const ids = (a) => Array.isArray(a) ? a.filter(id => typeof id === 'string') : [];
+  const mcq = {};
+  for (const [id, v] of Object.entries(r.mcq && typeof r.mcq === 'object' ? r.mcq : {})) mcq[id] = Boolean(v);
   return {
     thread: Array.isArray(r.thread) ? r.thread : [],
-    done: Array.isArray(r.done) ? r.done.filter(id => typeof id === 'string') : [],
+    mcq,
+    targets: ids(r.targets),
+    done: ids(r.done),
     finished: Boolean(r.finished),
     skipped: Boolean(r.skipped),
     active: Boolean(r.active),   // started and not yet finished or skipped
   };
 }
 
-export function roundFocus(round, cp) {
-  return cp.nodes.find(id => !round.done.includes(id)) ?? null;
+// Record the reader's first answer to a section's multiple-choice question in this round.
+export function recordRoundMcq(round, nodeId, correct) {
+  if (nodeId in round.mcq) return round;
+  return { ...round, mcq: { ...round.mcq, [nodeId]: Boolean(correct) } };
 }
 
-// Start (or restart) a round: the tutor's first question is on the first section not yet done.
+// What the conversation is about: sections whose multiple choice was missed, then the sections
+// the reader has shown least, in reading order on ties. TALK_PER_ROUND of them.
+export function talkTargets(round, cp, tutor) {
+  const missed = cp.nodes.filter(id => round.mcq[id] === false);
+  const rest = cp.nodes.filter(id => !missed.includes(id))
+    .map((id, i) => ({ id, i, level: levelOf(tutor, id), right: round.mcq[id] === true }))
+    .sort((a, b) => a.level - b.level || Number(a.right) - Number(b.right) || a.i - b.i)
+    .map(x => x.id);
+  return [...missed, ...rest].slice(0, TALK_PER_ROUND);
+}
+
+export function roundFocus(round) {
+  return round.targets.find(id => !round.done.includes(id)) ?? null;
+}
+
+// Start the conversation part of a round (or another round after a finished one).
 export function startRound(tutor, round, cp) {
-  const fresh = round.finished ? { ...createRound(), thread: round.thread } : { ...round, skipped: false };
-  const focus = roundFocus(fresh, cp) ?? cp.nodes[0];
-  return { ...openMove({ ...tutor, pending: null }, focus), round: fresh };
+  const base = round.finished ? { ...createRound(), mcq: round.mcq } : round;
+  const targets = talkTargets(base, cp, tutor);
+  const fresh = { ...base, targets, done: [], skipped: false, finished: false };
+  return { ...openMove({ ...tutor, pending: null }, targets[0] ?? cp.nodes[0]), round: fresh };
 }
 
 // One graded answer inside a round. The section the open question was about counts as done once
 // it is answered right; the next question moves to the next section; when none is left the round
 // closes on a statement. Reviews and the final assessment interleave exactly as elsewhere.
-export function applyRound(tutor, round, assessment, { cp, order = [] } = {}) {
+export function applyRound(tutor, round, assessment, { order = [] } = {}) {
   const pending = tutor?.pending;
   let next = round;
-  if (assessment?.result === 'correct' && pending && cp.nodes.includes(pending.node) && !round.done.includes(pending.node)) {
+  if (assessment?.result === 'correct' && pending && round.targets.includes(pending.node) && !round.done.includes(pending.node)) {
     next = { ...round, done: [...round.done, pending.node] };
   }
-  const focus = roundFocus(next, cp);
+  const focus = roundFocus(next);
   const step = applyAssessment(tutor, assessment, { focus: focus ?? pending?.node, order });
   if (!focus && step.move.type === 'question' && step.move.after === 'correct') {
     return { ...settle(step.tutor, { type: 'round-done', node: step.move.node, kind: 'check' }, step.changes), round: { ...next, finished: true } };
@@ -593,7 +612,15 @@ const DIFFICULTY_NOTES = {
 };
 
 // What the page tells Claude to do next. One move, stated as an instruction.
-export function moveDirective(move, { title = '', guess = '', question = '', titleOf = (id) => id, weak = [] } = {}) {
+export function moveDirective(move, opts = {}) {
+  const base = directiveFor(move, opts);
+  // The author's own question for the section, when there is one, anchors a fresh question.
+  return opts.seed && move.type === 'question' && move.after !== 'harder' && move.after !== 'easier'
+    ? `${base} If it fits, build the question from the author's prompt for this section: "${opts.seed}"`
+    : base;
+}
+
+function directiveFor(move, { title = '', guess = '', question = '', titleOf = (id) => id, weak = [] } = {}) {
   const about = `"${title}"`;
   switch (move.type) {
     case 'final':
@@ -648,13 +675,13 @@ export function moveDirective(move, { title = '', guess = '', question = '', tit
 // thread; then the learner's message with the page's direction and any retrieved excerpts.
 export function tutorTurns(meta, target, history, learnerText, move, {
   catalog = '', excerpts = '', difficulty = 0, answered = null, guess = '', question = '',
-  diagnostic = '', titleOf = (id) => id, weak = [], maxBytes = promptBudget(),
+  diagnostic = '', titleOf = (id) => id, weak = [], seed = '', maxBytes = promptBudget(),
 } = {}) {
   const side = answered && answered.id !== target.id
     ? `\n\n--- THE SECTION THEIR LAST ANSWER WAS ABOUT ---\n${nodeContext(meta, answered).slice(0, MAX_SIDE_CONTEXT)}\n--- END ---`
     : '';
   const direction = `--- TUTOR DIRECTION (from the page, not the learner) ---\n`
-    + `${moveDirective(move, { title: target.title, guess, question, titleOf, weak })}\n`
+    + `${moveDirective(move, { title: target.title, guess, question, titleOf, weak, seed })}\n`
     + `Difficulty: ${DIFFICULTY_NOTES[difficulty] ?? DIFFICULTY_NOTES[0]}\n--- END OF DIRECTION ---`;
   return fitTurns(({ history, excerpts, context }) => {
     const lead = {

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { nodeContext, buildTurns, promptBudget, turnsBytes, essayPrompt, copyForError, isFatal, INSTRUCTIONS, MODEL_TIERS, tierLabel, toolStatus, nextTier } from '../assets/lib/ask.js';
+import { nodeContext, buildTurns, promptBudget, turnsBytes, copyForError, isFatal, INSTRUCTIONS, MODEL_TIERS, tierLabel, toolStatus, nextTier } from '../assets/lib/ask.js';
 
 const doc = () => JSON.parse(readFileSync(new URL('./fixtures/attention.nodes.json', import.meta.url)));
 const node = () => doc().nodes[1];
@@ -92,15 +92,6 @@ test('the source catalog rides in the instructions turn and excerpts ride with t
 
 test('without excerpts the question goes through unchanged', () => {
   assert.equal(buildTurns('ctx', [], 'q').at(-1).content, 'q');
-});
-
-test('the essay prompt carries the question, the model answer and the reader answer', () => {
-  const n = node();
-  const p = essayPrompt(doc().meta, n, 'because big dot products saturate softmax');
-  assert.ok(p.includes(n.quiz.selfExplain));
-  assert.ok(p.includes(n.quiz.selfExplainAnswer));
-  assert.match(p, /READER'S ANSWER: because big dot products saturate softmax/);
-  assert.match(p, /"verdict"/);
 });
 
 test('the instructions tell Claude to cite sources and not invent attributions', () => {

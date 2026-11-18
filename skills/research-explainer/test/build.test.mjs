@@ -25,7 +25,7 @@ test('bundling preserves the function bodies', () => {
 
 test('dependencies are concatenated before their consumers', () => {
   const out = bundle();
-  assert.ok(out.indexOf('function linearOrder') < out.indexOf('function scheduleReasks'));
+  assert.ok(out.indexOf('function linearOrder') < out.indexOf('function checkpointsFor'));
   assert.ok(out.indexOf('function buildTree') < out.indexOf('function renderSidebar'));
 });
 

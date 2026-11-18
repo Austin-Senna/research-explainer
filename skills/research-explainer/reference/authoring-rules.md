@@ -214,6 +214,15 @@ Every node also lists its `sources` under its subtitle, with locators, so the se
 visible before the body. The verifier warns `UNNAMED_SOURCE` on an attribution with no link.
 *Observed failure:* a reader could not tell who "the researchers" were.
 
+### 6.22 What could not be checked goes in `caveats` **[U]**
+Notes about verification (a paper that could not be opened, a number taken from a search snippet,
+a claim nobody could locate, a test that was not run) go in the node's `caveats` field, never in
+the explanation. The page shows them collapsed, small and grey, under "What could not be checked".
+They matter for trust and stay honest, but a reader learning the idea should not have to read
+past them. Write them as plain statements of what is uncertain and what not to rely on. The
+verifier warns `CAVEAT_IN_BODY` when such a note sits in the spiral. They do not count toward the
+word budget.
+
 ### 6.16 Banned outright
 
 - **Fun asides, fun facts, decorative imagery.** g = −0.16 to −0.33, worst when persistent on
@@ -299,14 +308,20 @@ Confidence routing (wrong + sure gets a re-ask, wrong + unsure does not) was rem
 was contested on conceptual material, where one study got the reverse, and a reader asked for the extra
 "How sure are you?" step on every question to go.
 
-### 7.7 One retrieval opportunity per conceptual segment **[D] + [U]**
-A segment is a core node. Each gets **one** multiple-choice question and, optionally, a
-self-explanation; prerequisites and extensions get none (`QUIZ_ON_SUPPORT`, `TOO_MANY_MCQ`). The
-tutor is where retrieval goes deeper: `socratic-tutor` counts recall, not recognition, and a
-page that already asks 50 questions duplicates it. A real reader found the quiz load heavy.
-Dosage is contested three ways; don't assert a number. What is solid: testing at segment
-boundaries improved integration (d = 0.70) with *lower* reported anxiety. **This document is a
-single session, so calibrate down** — Quantum Country's one-month follow-through is 29%.
+### 7.7 Questions only where the claims rest: central nodes **[D] + [U]**
+A node is **central** when a sentence of `meta.claimSummary` depends on it: remove the node and
+that claim is left unexplained. Mark it `central: true` with `supports: [i]`, the 0-based indexes
+of those sentences (the verifier fails `CENTRAL_NO_CLAIM` otherwise). Write the claimSummary
+first; centrality follows from it, not from how interesting a node is. Keep it to the few the
+claims rest on, at most about half the core nodes (`TOO_MANY_CENTRAL`).
+
+Only central nodes carry questions, and none of them sit on the section page. Each central node
+gets **one** multiple-choice question and a `selfExplain` prompt with its model answer. Quiz time,
+after each big section, asks the multiple choice first (instant, no Claude), then two
+conversational questions aimed at what the multiple choice missed; the `selfExplain` prompt seeds
+the tutor's question for its section. Other nodes carry none (`QUIZ_OFF_CENTRAL`). A real reader
+found a quiz after every section heavy, and the page's quiz duplicated the tutor's.
+Dosage is contested three ways; don't assert a number.
 
 ### 7.8 A self-explanation box may be as good as a quiz **[B]**
 Retrieval vs. no activity g = 0.610; vs. restudy 0.330; **vs. other elaborative strategies
@@ -322,9 +337,8 @@ three facts you asked about.
 
 ### 7.10 The opening prediction: few, reasoned from the overview, aimed at the central claim **[D] + [U]**
 The default tutor opens a node with `quiz.predict` only when the node has one, and most nodes
-should not. Write it for the **core nodes that carry the paper's mechanism or main result**,
-typically a third of the core nodes, never a prereq or extension (the verifier warns
-`PREDICT_ON_SUPPORT`). A prediction before every section is a toll on reading, and §7.9's
+should not. Write it only for **central** nodes (§7.7), and not necessarily all of them (the
+verifier warns `PREDICT_OFF_CENTRAL`). A prediction before every section is a toll on reading, and §7.9's
 evidence says the benefit lands only on what was asked. Everything else opens straight into its
 body. Given §7.9's narrow effect, it targets the
 node's central claim, never a side detail. And because the reader has only read the overview and

@@ -7,6 +7,18 @@ const KINDS = new Set(['prereq', 'core', 'extension']);
 
 function err(list, code, nodeId, message) { list.push({ code, nodeId, message }); }
 
+// Rule 7.7: the nodes quiz time asks about. Marked `central` (each backs a claimSummary sentence);
+// older documents without any marks fall back to the core nodes.
+export function isQuizzed(doc, n) {
+  const marked = (doc.nodes ?? []).some(x => x.central === true);
+  return marked ? n.central === true : n.kind === 'core';
+}
+
+// The claimSummary split into sentences, for `supports` indexes.
+export function claimSentences(doc) {
+  return String(doc.meta?.claimSummary ?? '').split(/(?<=[.!?])\s+/).map(x => x.trim()).filter(Boolean);
+}
+
 export function checkStructure(doc, errors) {
   const nodes = Array.isArray(doc.nodes) ? doc.nodes : [];
   if (!doc.meta) err(errors, 'MISSING_FIELD', null, 'meta is absent');
@@ -71,9 +83,16 @@ export function checkQuizzes(doc, sourceText, errors) {
     // Quizzes are multiple choice only. A leftover cloze would be silently dropped by the
     // renderer, so it fails loudly here instead.
     if (q.cloze) err(errors, 'CLOZE_UNSUPPORTED', n.id, 'cloze is no longer supported; rewrite it as an mcq');
-    // Rule 7.7: the page's own retrieval check sits on the core nodes; the tutor covers the rest.
-    if (n.kind === 'core' && (!Array.isArray(q.mcq) || q.mcq.length === 0)) {
-      err(errors, 'NO_MCQ', n.id, 'core node has no multiple-choice question');
+    // Rule 7.7: quiz time asks about the central nodes, so each needs its multiple-choice question.
+    if (isQuizzed(doc, n) && (!Array.isArray(q.mcq) || q.mcq.length === 0)) {
+      err(errors, 'NO_MCQ', n.id, 'central node has no multiple-choice question');
+    }
+    // A central node is central because a claim rests on it: name the claimSummary sentence(s).
+    if (n.central === true) {
+      const count = claimSentences(doc).length;
+      const ok = Array.isArray(n.supports) && n.supports.length
+        && n.supports.every(i => Number.isInteger(i) && i >= 0 && i < count);
+      if (!ok) err(errors, 'CENTRAL_NO_CLAIM', n.id, `central needs supports: indexes into the ${count} claimSummary sentences`);
     }
     // Spec §7.8: the self-explanation gets feedback like every other question, and the model
     // answer is what the reader compares against when Claude cannot judge it.
@@ -182,8 +201,13 @@ const MAX_BLOCK_WORDS = 250;
 export const WORD_BUDGET = { prereq: 220, extension: 220, core: 300 };
 // The collapsed Details block (spiral.formal) is opt-in depth, but still capped.
 export const DETAILS_BUDGET = 250;
+// What the reader sees: a [title](url) link shows its title, not its URL.
+export function visibleWords(text) {
+  return normalizeWords(String(text ?? '').replace(/\[([^\]]+)\]\(https?:\/\/[^\s)]+\)/g, '$1')).length;
+}
 const MAX_MCQ = 1;
 const STEP_CUES = 5;
+const CAVEAT_PHRASE = /\b(?:could not be (?:checked|opened|verified|confirmed|read|found)|not found in anything|search snippet|was not seen|do not rely on (?:it|this))\b/i;
 const NARRATION = /\bI(?:'m| am| will|'ll| asked| want you)\b|\b(?:the key insight|the one idea to hold onto|the thing to walk away with|here is where it gets interesting|this is the tricky part|worth (?:slowing down|pausing) on|at its core|TL;DR)\b|\bwill feel (?:slower|harder|worse)\b/i;
 const VAGUE_SOURCE = /\b(?:researchers?|studies|a study|a (?:review|survey|paper)(?: of [^.]{0,40})?|one of (?:these|the) papers|(?:some|recent|prior) work|the literature|experts)\b[^.]{0,80}\b(?:show(?:s|n|ed)?|f(?:ou|i)nds?|found|suggests?|reports?|argues?|argued)\b/i;
 const CONNECTIVES = ['but', 'therefore', 'so', 'because', 'however', 'yet', 'instead', 'which is why', 'unless'];
@@ -196,19 +220,26 @@ export function checkWarnings(doc, warnings) {
   // should be the few core ones worth predicting. None at all means it never opens with one.
   for (const n of nodes) {
     const q = n.quiz ?? {};
-    if (n.kind !== 'core' && ((q.mcq ?? []).length || q.selfExplain)) {
-      warn(warnings, 'QUIZ_ON_SUPPORT', n.id, `a ${n.kind} node carries page questions; the tutor covers support nodes`);
+    if (!isQuizzed(doc, n) && ((q.mcq ?? []).length || q.selfExplain)) {
+      warn(warnings, 'QUIZ_OFF_CENTRAL', n.id, 'questions on a node quiz time does not ask about; only central nodes are quizzed');
     }
-    if (n.kind === 'core' && (q.mcq ?? []).length > MAX_MCQ) {
-      warn(warnings, 'TOO_MANY_MCQ', n.id, `${q.mcq.length} multiple-choice questions; a core node gets ${MAX_MCQ}`);
+    if (isQuizzed(doc, n) && (q.mcq ?? []).length > MAX_MCQ) {
+      warn(warnings, 'TOO_MANY_MCQ', n.id, `${q.mcq.length} multiple-choice questions; a central node gets ${MAX_MCQ}`);
     }
+  }
+  // Central means the claims rest on it: a few nodes, not most of the paper.
+  const core = nodes.filter(n => n.kind === 'core').length;
+  const central = nodes.filter(n => n.central === true).length;
+  if (!central) warn(warnings, 'NO_CENTRAL', null, 'no node is marked central; quiz time falls back to every core node');
+  else if (central > Math.max(2, Math.ceil(core / 2))) {
+    warn(warnings, 'TOO_MANY_CENTRAL', null, `${central} central nodes of ${core} core; keep it to the ones the claims rest on`);
   }
   if (nodes.length && !nodes.some(n => String(n.quiz?.predict ?? '').trim())) {
     warn(warnings, 'NO_PREDICT', null, 'no node has quiz.predict; the tutor-first page never opens with a prediction');
   }
   for (const n of nodes) {
-    if (n.kind !== 'core' && String(n.quiz?.predict ?? '').trim()) {
-      warn(warnings, 'PREDICT_ON_SUPPORT', n.id, `quiz.predict on a ${n.kind} node; predictions belong on core nodes`);
+    if (!isQuizzed(doc, n) && String(n.quiz?.predict ?? '').trim()) {
+      warn(warnings, 'PREDICT_OFF_CENTRAL', n.id, 'quiz.predict on a node that is not central');
     }
   }
 
@@ -218,9 +249,9 @@ export function checkWarnings(doc, warnings) {
     const budget = WORD_BUDGET[n.kind];
     if (!budget) continue;
     const words = [n.spiral?.intuition, n.spiral?.concrete, n.wrongTurn?.belief, n.wrongTurn?.correction]
-      .reduce((sum, t) => sum + normalizeWords(t ?? '').length, 0);
+      .reduce((sum, t) => sum + visibleWords(t), 0);
     if (words > budget) warn(warnings, 'OVER_BUDGET', n.id, `${words} visible words; a ${n.kind} node gets ${budget}`);
-    const details = normalizeWords(n.spiral?.formal ?? '').length;
+    const details = visibleWords(n.spiral?.formal);
     if (details > DETAILS_BUDGET) warn(warnings, 'LONG_DETAILS', n.id, `${details} words under Details; cap is ${DETAILS_BUDGET}`);
   }
 
@@ -234,6 +265,10 @@ export function checkWarnings(doc, warnings) {
     // Rule 6.16: the page explains the subject, never itself or the reader's feelings.
     const narration = text.match(NARRATION);
     if (narration) warn(warnings, 'NARRATION', n.id, `"${narration[0]}": say the thing, not what the page is doing`);
+    // Rule 6.22: notes on what could not be verified belong in `caveats`, not the explanation.
+    const body = [n.spiral?.intuition, n.spiral?.concrete, n.spiral?.formal].filter(Boolean).join('\n');
+    const caveat = body.match(CAVEAT_PHRASE);
+    if (caveat) warn(warnings, 'CAVEAT_IN_BODY', n.id, `"${caveat[0]}": move verification notes to caveats`);
     // Rule 6.16: no em dashes. Use a period, a colon or a comma.
     const dashes = (text.match(/\u2014/g) ?? []).length;
     if (dashes) warn(warnings, 'EM_DASH', n.id, `${dashes} em dash${dashes > 1 ? 'es' : ''}`);

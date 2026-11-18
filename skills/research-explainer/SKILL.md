@@ -11,6 +11,19 @@ description: Use when turning a paper, topic, or arXiv ID into an interactive HT
 resources with their costs, and stop before spending anything on research. Phase 7 is the quality gate: never build or
 publish a document that `verify.mjs` fails.
 
+**Every question to the user is in plain words, and says what each answer changes.** The user has
+not read the paper yet, so no term from it may appear in a gate question unexplained: not in the
+diagnostic statements, not in the outline, not in the resource list. Write the diagnostic
+statements as everyday claims ("a model that predicts the next moment well will automatically
+imagine long sequences well"), never in the paper's vocabulary ("one-step accuracy implies an L2
+simulator"). Describe each outline section by what it explains, and each resource by what it
+changes in this explainer, with its cost. Each diagnostic statement names the background section
+it decides, in its option description ("right: skips *Predicting vs. deciding*, about a minute"),
+so the reader sees what they would skip; after the check, list the background sections kept and
+skipped before the outline. Jargon in a diagnostic measures the wording, not the
+reader: a real reader answered "not sure" to statements they could have reasoned about, because
+the words were unfamiliar.
+
 **Depth defaults to `quick`**: no research subagents unless the user picks resources at the gate,
 and no spend beyond reading the source and one search. Research is opted into, never out of.
 
@@ -111,6 +124,8 @@ One read producing three artifacts:
 - **prerequisite inventory** — concepts the source assumes without introducing
 - **unexplained claims** — assertions it makes but does not justify. These are the *only*
   legitimate targets for research fan-out
+- **claimSummary draft and central nodes** — the 5 sentences first, then mark as central the few
+  nodes a sentence depends on (authoring rules §7.7). Only those get questions
 
 ### 3. Diagnose
 Two steps, and the second only runs on a yes.
@@ -145,7 +160,9 @@ refresher by default**. When in doubt, include the scaffolding.
 The score sets **defaults**, never forks content.
 
 ### 4. Plan and gate
-Merge failed items into prereq nodes. Prune or extend the tree by depth. Print the tree.
+Merge failed items into prereq nodes. Prune or extend the tree by depth. Print the tree in plain
+words, with the background sections kept and skipped, and a ★ on each central node with the
+claim it backs, so the user can add or remove one before anything is written.
 
 **Then propose resources and let the user pick.** Run one search for named resources that close
 this reader's gaps: prerequisites they failed or were not probed on, and claims the source asserts
@@ -308,12 +325,14 @@ branches. Breadth is cheap; depth is expensive. 10–20 items per level is fine 
     "diagram": { "svg" | "mermaid", "alt", "cueCount": 7, "kind": "onion|dataflow|comparison|result" },
     //   five or more parts → "steps": [{ "svg" | "mermaid", "alt", "caption" }], each a redraw adding one part (§9.9)
     "figures": [{ "src": "figures/x.png", "alt", "caption", "credit", "url" }],  // inlined by the build
-    "quiz": {  // core nodes only (§7.7)
+    "central": true, "supports": [0, 2],  // claimSummary sentences this node backs; only central nodes are quizzed (§7.7)
+    "quiz": {  // central nodes only; shown in quiz time, never on the section page
       "mcq":   [{ "stem", "options": [{ "text", "correct", "why" }], "explanation" }],  // exactly one, multiple choice
       "selfExplain": "Conceptualize in one sentence why …",
-      "selfExplainAnswer": "the author's one-sentence model answer",  // required: Claude grades against it, and it is shown as feedback
+      "selfExplainAnswer": "the author's one-sentence model answer",  // required; seeds the tutor's conversational question
       "predict": "one question the reader can reason about from the overview and this node's hook alone?"  // optional, core nodes only, few of them; opens the node in the default tutor (§7.10)
     },
+    "caveats": "what could not be verified, in plain sentences",  // optional; shown collapsed, small and grey (§6.22)
     "sources": [{ "label", "url", "locator": "§3.2.1" }]  // shown as links under the subtitle; also cite inline as [title](url) (§6.21)
   }]
 }

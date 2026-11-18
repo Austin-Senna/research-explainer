@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
-  checkpointsFor, createRound, startRound, applyRound,
+  checkpointsFor, createRound, startRound, applyRound, recordRoundMcq, talkTargets, TALK_PER_ROUND,
   trackedNodes, placement, placeTutor, diagnosticLine, weakestAreas, PLACEMENT_LEVEL,
   tutorVariant, createTutor, skillOf, levelOf, validateAssessment, canRaise, applyAssessment, applyPageSignal,
   pickReview, openMove, tellMove, difficultyMove, parseCommand, pretestQuestion, needsPretest, recordPretest,
@@ -224,15 +224,13 @@ test('misconceptions are recorded once each', () => {
   assert.equal(step.tutor.misconceptions.length, 1);
 });
 
-test('the page quiz counts for one check at most, and never alone', () => {
-  let t = createTutor();
-  t = applyPageSignal(t, A, { type: 'mcq', index: 0, correct: true, total: 1 }).tutor;
-  const self = applyPageSignal(t, A, { type: 'self', verdict: 'solid' });
-  assert.deepEqual(skillOf(self.tutor, A).evidence.map(e => e.kind), ['mcq', 'self']);
-  assert.deepEqual(self.changes, [], 'two quiz signals are not two checks and are not unprompted');
-  assert.equal(levelOf(self.tutor, A), 0);
+test('the multiple choice counts for one check at most, and never alone', () => {
+  const quiz = applyPageSignal(createTutor(), A, { type: 'mcq', index: 0, correct: true, total: 1 });
+  assert.deepEqual(skillOf(quiz.tutor, A).evidence.map(e => e.kind), ['mcq']);
+  assert.deepEqual(quiz.changes, [], 'a quiz signal is not unprompted');
+  assert.equal(levelOf(quiz.tutor, A), 0);
   // One unprompted tutor answer plus the quiz credit completes the pair.
-  const step = run(self.tutor, A, [right]);
+  const step = run(quiz.tutor, A, [right]);
   assert.deepEqual(step.changes, [{ node: A, from: 0, to: 1 }]);
 });
 
@@ -250,9 +248,7 @@ test('a multiple-choice question counts only on the first try, and only when all
   assert.deepEqual(skillOf(u, A).evidence, [{ kind: 'mcq' }], 'and only once');
 });
 
-test('only a "solid" self-explanation counts, and quiz signals stop counting at level 3', () => {
-  const partial = applyPageSignal(createTutor(), A, { type: 'self', verdict: 'partial' });
-  assert.deepEqual(skillOf(partial.tutor, A).evidence, []);
+test('quiz signals stop counting at level 3', () => {
   assert.equal(canRaise({ level: 2, evidence: [{ kind: 'recall' }, { kind: 'mcq' }] }), true);
   assert.equal(canRaise({ level: 3, evidence: [{ kind: 'recall' }, { kind: 'mcq' }] }), false);
 });
@@ -404,10 +400,12 @@ test('the sidebar shows levels only when the tutor is in use', () => {
   assert.equal(html.match(/data-lvl=/g).length, 2, 'untracked sections carry no meter');
 });
 
-test('the skill map tracks core nodes only, and falls back to every node without any', () => {
+test('the skill map tracks central nodes, falling back to core, then to every node', () => {
   const nodes = doc().nodes;
-  assert.deepEqual(trackedNodes(nodes).map(n => n.kind), nodes.filter(n => n.kind === 'core').map(() => 'core'));
-  const legacy = nodes.map(n => ({ ...n, kind: 'prereq' }));
+  assert.deepEqual(trackedNodes(nodes).map(n => n.id), nodes.filter(n => n.central).map(n => n.id));
+  const unmarked = nodes.map(({ central, supports, ...n }) => n);
+  assert.deepEqual(trackedNodes(unmarked).map(n => n.kind), unmarked.filter(n => n.kind === 'core').map(() => 'core'));
+  const legacy = unmarked.map(n => ({ ...n, kind: 'prereq' }));
   assert.equal(trackedNodes(legacy).length, nodes.length);
 });
 
@@ -521,8 +519,6 @@ test('an answer shown by the page quiz makes the next tutor answer prompted', ()
   const quizzed = applyPageSignal(createTutor(), A, { type: 'mcq', index: 0, correct: false, total: 2 }).tutor;
   const step = run(quizzed, A, [right]);
   assert.deepEqual(skillOf(step.tutor, A).evidence, [{ kind: 'prompted' }]);
-  const explained = applyPageSignal(createTutor(), A, { type: 'self', verdict: 'partial' }).tutor;
-  assert.equal(skillOf(explained, A).told, true);
 });
 
 test('the opening prediction is the authored quiz.predict', () => {
@@ -545,56 +541,79 @@ test('checkpoints group top-level sections until they cover three tracked ones',
   assert.deepEqual(cps[2].nodes, ['con', 'un'], 'a final run of two stands alone');
 });
 
-test('a final run of one joins the checkpoint before it, and support nodes never anchor one', () => {
-  const nodes = tree([['a', 'core'], ['b', 'core'], ['c', 'core'], ['d', 'core'], ['e', 'extension']]);
-  const cps = checkpointsFor(nodes);
-  assert.equal(cps.length, 1);
-  assert.deepEqual(cps[0].nodes, ['a', 'b', 'c', 'd']);
-  assert.equal(cps[0].anchor, 'd');
+test('a final run of one joins the checkpoint before it, and central nodes set the groups', () => {
+  const nodes = tree([['a', 'core'], ['b', 'core'], ['c', 'core'], ['d', 'extension']]);
+  assert.deepEqual(checkpointsFor(nodes).map(c => c.nodes), [['a', 'b', 'c']], 'b+a make two, c joins them');
+  const marked = tree([['a', 'core'], ['b', 'core'], ['c', 'core'], ['d', 'core']]).map(n => ({ ...n, central: ['b', 'd'].includes(n.id) }));
+  assert.deepEqual(trackedNodes(marked).map(n => n.id), ['b', 'd'], 'only central nodes are tracked');
+  assert.deepEqual(checkpointsFor(marked).map(c => [c.anchor, c.nodes]), [['d', ['b', 'd']]]);
   assert.deepEqual(checkpointsFor(tree([['x', 'core']])).map(c => c.nodes), [['x']], 'a lone section still gets one');
   assert.equal(checkpointsFor(tree([['x', 'core']]))[0].title, 'X', 'a one-section checkpoint is named after it');
 });
 
-test('a round asks each section once, moves on after a right answer, and closes on a statement', () => {
+test('the conversation targets missed multiple choice first, then the weakest sections', () => {
+  const cp = { id: 'cp', anchor: 'c', nodes: ['a', 'b', 'c'], title: '3 sections' };
+  let round = createRound();
+  round = recordRoundMcq(round, 'a', true);
+  round = recordRoundMcq(round, 'c', false);
+  round = recordRoundMcq(round, 'c', true);
+  assert.deepEqual(round.mcq, { a: true, c: false }, 'the first answer is the one that counts');
+  const t = createTutor({ skills: { a: { level: 3 }, b: { level: 1 } } });
+  assert.deepEqual(talkTargets(round, cp, t), ['c', 'b'].slice(0, TALK_PER_ROUND));
+});
+
+test('a round talks through its targets, moves on after a right answer, and closes on a statement', () => {
   const cp = { id: 'cp', anchor: B, nodes: [A, B], title: 'T' };
   const order = [A, B];
   let step = startRound(createTutor(), createRound(), cp);
+  assert.deepEqual(step.round.targets, [A, B]);
   assert.deepEqual(step.tutor.pending, { node: A, kind: 'check' });
-  step = applyRound(step.tutor, step.round, wrong, { cp, order });
+  step = applyRound(step.tutor, step.round, wrong, { order });
   assert.equal(step.move.type, 'narrow');
   assert.deepEqual(step.round.done, []);
-  step = applyRound(step.tutor, step.round, right, { cp, order });
+  step = applyRound(step.tutor, step.round, right, { order });
   assert.deepEqual(step.round.done, [A]);
   assert.deepEqual(step.tutor.pending, { node: B, kind: 'check' });
-  step = applyRound(step.tutor, step.round, right, { cp, order });
+  step = applyRound(step.tutor, step.round, right, { order });
   assert.equal(step.move.type, 'round-done');
   assert.equal(step.round.finished, true);
   assert.equal(step.tutor.pending, null);
   assert.match(moveDirective(step.move, { title: 'T' }), /Do not ask a question/);
 });
 
-test('another round after a finished one starts from the first section with a fresh thread', () => {
-  const cp = { id: 'cp', anchor: B, nodes: [A, B], title: 'T' };
-  const finished = createRound({ done: [A, B], finished: true, thread: [{ role: 'assistant', content: 'q' }] });
-  const step = startRound(createTutor(), finished, cp);
-  assert.deepEqual(step.round.done, []);
-  assert.equal(step.round.finished, false);
-  assert.deepEqual(step.tutor.pending, { node: A, kind: 'check' });
+test('the author\'s own prompt seeds a fresh question, never a harder or easier retry', () => {
+  assert.match(moveDirective({ type: 'question', after: 'open' }, { title: 'T', seed: 'Why scale?' }), /author's prompt for this section: "Why scale\?"/);
+  assert.doesNotMatch(moveDirective({ type: 'question', after: 'harder' }, { title: 'T', seed: 'Why scale?' }), /author's prompt/);
+  assert.doesNotMatch(moveDirective({ type: 'narrow' }, { title: 'T', seed: 'Why scale?' }), /author's prompt/);
 });
 
-test('the quiz-time block is idle until started, and skippable in every open state', () => {
-  const cp = { id: 'cp-x', anchor: B, nodes: [A, B], title: 'Attention' };
-  const titles = new Map([[A, 'Scaled'], [B, 'Multi']]);
-  const idle = renderCheckpoint(cp, createRound(), { titles });
-  assert.match(idle, /data-state="idle"/);
-  assert.match(idle, /data-cp-start/);
-  assert.match(idle, /data-cp-skip/);
-  assert.match(idle, /Scaled[\s\S]*Multi/);
-  assert.ok(!idle.includes('data-cp-form'), 'nothing is asked before Start');
-  const running = renderCheckpoint(cp, createRound({ active: true }), { titles });
-  assert.match(running, /data-cp-form/);
-  assert.match(running, /data-cp-skip/);
-  for (const a of ['tell', 'easier', 'harder', 'map', 'save']) assert.ok(running.includes(`data-cp-action="${a}"`), a);
-  assert.match(renderCheckpoint(cp, createRound({ finished: true }), { titles }), /Another round/);
-  assert.match(renderCheckpoint(cp, createRound({ skipped: true }), { titles }), /data-state="skipped"[\s\S]*Start quiz time/);
+test('another round after a finished one starts over and keeps the multiple-choice results', () => {
+  const cp = { id: 'cp', anchor: B, nodes: [A, B], title: 'T' };
+  const finished = createRound({ done: [A, B], finished: true, mcq: { [B]: false }, thread: [{ role: 'assistant', content: 'q' }] });
+  const step = startRound(createTutor(), finished, cp);
+  assert.deepEqual(step.round.done, []);
+  assert.deepEqual(step.round.mcq, { [B]: false });
+  assert.deepEqual(step.round.targets[0], B, 'the miss comes first');
+  assert.equal(step.round.finished, false);
+  assert.deepEqual(step.tutor.pending, { node: B, kind: 'check' });
+});
+
+test('quiz time shows multiple choice first, offers the tutor only when it can talk, and is skippable', () => {
+  const d = doc();
+  const nodes = new Map(d.nodes.map(n => [n.id, n]));
+  const cp = { id: 'cp-x', anchor: B, nodes: [A, B], title: '2 sections' };
+  const offline = renderCheckpoint(cp, createRound(), { nodes, talk: false });
+  assert.match(offline, /data-state="mcq"/);
+  assert.equal((offline.match(/data-kind="mcq"/g) ?? []).length, 2);
+  assert.match(offline, /data-cp-skip/);
+  assert.ok(!offline.includes('data-cp-start'), 'without Claude there is no tutor to start');
+  const online = renderCheckpoint(cp, createRound(), { nodes, talk: true });
+  assert.match(online, /data-cp-start>Next: 2 questions from the tutor/);
+  const talking = renderCheckpoint(cp, createRound({ active: true, mcq: { [A]: true, [B]: false } }), { nodes, talk: true });
+  assert.match(talking, /Multiple choice: 1 of 2 right/);
+  assert.match(talking, /data-cp-form/);
+  assert.ok(!talking.includes('data-kind="mcq"'), 'the questions give way to the conversation');
+  for (const a of ['tell', 'easier', 'harder', 'map', 'save']) assert.ok(talking.includes(`data-cp-action="${a}"`), a);
+  assert.match(renderCheckpoint(cp, createRound({ finished: true }), { nodes, talk: true }), /Another round/);
+  assert.match(renderCheckpoint(cp, createRound({ skipped: true }), { nodes, talk: true }), /data-cp-reopen/);
 });

@@ -371,3 +371,12 @@ details.layer-formal[open] > summary { margin-bottom: .6rem; }
 .node-sources { margin: -1.4rem 0 2rem; font-family: ui-sans-serif, system-ui, sans-serif;
   font-size: .8rem; color: var(--ink-soft); }
 .node-sources a, .layer a, .wrong-turn a { color: var(--accent); }
+
+/* Rule 6.22: verification caveats, out of the way until wanted. */
+details.caveats { margin: 1.6rem 0 0; font-family: ui-sans-serif, system-ui, sans-serif;
+  font-size: .8rem; line-height: 1.5; color: var(--ink-soft); }
+details.caveats > summary { cursor: pointer; list-style: none; }
+details.caveats > summary::-webkit-details-marker { display: none; }
+details.caveats > summary::before { content: "▸ "; }
+details.caveats[open] > summary::before { content: "▾ "; }
+details.caveats p { margin: .4rem 0 0; }

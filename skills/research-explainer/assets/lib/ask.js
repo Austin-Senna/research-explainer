@@ -124,25 +124,6 @@ export function fitTurns(build, { history = [], excerpts = '', context = '' }, m
   return turns;
 }
 
-// Spec §7.8: a self-explanation prompt earns feedback like any other question. Claude compares
-// the reader's sentence with the section and the author's model answer and says what is missing.
-export function essayPrompt(meta, node, answer) {
-  return [
-    'A reader was asked to explain something in their own words after reading the section below.',
-    'Judge whether their answer captures the key idea. Wording does not matter; the idea does.',
-    'Reply with only a JSON object: {"verdict": "solid" | "partial" | "missing", "feedback": string}.',
-    'feedback is one or two plain sentences addressed to the reader: what they got right, and the one thing missing or wrong if any. No praise padding.',
-    '',
-    `--- SECTION ---\n${nodeContext(meta, node)}\n--- END OF SECTION ---`,
-    '',
-    `QUESTION: ${node.quiz?.selfExplain ?? ''}`,
-    `AUTHOR'S MODEL ANSWER: ${node.quiz?.selfExplainAnswer ?? ''}`,
-    `READER'S ANSWER: ${String(answer ?? '').slice(0, 2000)}`,
-  ].join('\n');
-}
-
-export const VERDICT_COPY = { solid: 'That captures it.', partial: 'Partly there.', missing: 'Not yet.' };
-
 // The viewer's own model tiers: the page cannot pick a specific model or toggle thinking, only
 // these three (quick answers at once; default and complex think first, complex longest).
 export const MODEL_TIERS = [

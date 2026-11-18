@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { verify } from '../assets/verify.mjs';
+import { verify, visibleWords } from '../assets/verify.mjs';
 
 const doc = () => JSON.parse(readFileSync(new URL('./fixtures/attention.nodes.json', import.meta.url)));
 const src = () => readFileSync(new URL('./fixtures/attention.source.txt', import.meta.url), 'utf8');
@@ -154,11 +154,11 @@ test('an intuition that opens by naming a bold term warns; naming it after the i
   assert.ok(!verify(d, src()).warnings.some(w => w.code === 'NAME_FIRST'));
 });
 
-test('predictions belong on core nodes, and a document with none warns once', () => {
+test('predictions belong on central nodes, and a document with none warns once', () => {
   const d = doc();
   const prereq = d.nodes.find(n => n.kind === 'prereq');
   prereq.quiz = { predict: 'What would you expect?' };
-  assert.ok(verify(d, src()).warnings.some(w => w.code === 'PREDICT_ON_SUPPORT' && w.nodeId === prereq.id));
+  assert.ok(verify(d, src()).warnings.some(w => w.code === 'PREDICT_OFF_CENTRAL' && w.nodeId === prereq.id));
   for (const n of d.nodes) delete n.quiz?.predict;
   const none = verify(d, src()).warnings.filter(w => w.code === 'NO_PREDICT');
   assert.equal(none.length, 1);
@@ -177,14 +177,14 @@ test('the collapsed Details block does not count toward the visible budget but h
   assert.ok(w.some(x => x.code === 'LONG_DETAILS' && x.nodeId === core.id));
 });
 
-test('page questions sit on core nodes, one multiple-choice each', () => {
+test('page questions sit on central nodes, one multiple-choice each', () => {
   const d = doc();
   const prereq = d.nodes.find(n => n.kind === 'prereq');
   const core = d.nodes.find(n => n.kind === 'core');
   prereq.quiz = { mcq: [structuredClone(core.quiz.mcq[0])] };
   core.quiz.mcq.push(structuredClone(core.quiz.mcq[0]));
   const { warnings, errors } = verify(d, src());
-  assert.ok(warnings.some(x => x.code === 'QUIZ_ON_SUPPORT' && x.nodeId === prereq.id));
+  assert.ok(warnings.some(x => x.code === 'QUIZ_OFF_CENTRAL' && x.nodeId === prereq.id));
   assert.ok(warnings.some(x => x.code === 'TOO_MANY_MCQ' && x.nodeId === core.id));
   delete core.quiz.mcq;
   assert.ok(verify(d, src()).errors.some(e => e.code === 'NO_MCQ' && e.nodeId === core.id));
@@ -209,4 +209,38 @@ test('a named, linked source and a stepped diagram pass', () => {
   const codes = verify(d, src()).warnings.filter(w => w.nodeId === n.id).map(w => w.code);
   assert.ok(!codes.includes('UNNAMED_SOURCE'));
   assert.ok(!codes.includes('ALL_AT_ONCE'));
+});
+
+test('a link counts as its title toward the word budget, not its URL', () => {
+  assert.equal(visibleWords('[PostTrainBench](https://arxiv.org/abs/2603.08640) found it.'), 3);
+});
+
+test('a verification note in the explanation warns; in caveats it does not', () => {
+  const d = doc();
+  const n = d.nodes[1];
+  const note = 'The full paper could not be opened, so the sizes come from a search snippet.';
+  n.spiral.concrete = `${n.spiral.concrete}\n\n${note}`;
+  assert.ok(verify(d, src()).warnings.some(w => w.code === 'CAVEAT_IN_BODY' && w.nodeId === n.id));
+  n.spiral.concrete = n.spiral.concrete.replace(`\n\n${note}`, '');
+  n.caveats = note;
+  assert.ok(!verify(d, src()).warnings.some(w => w.code === 'CAVEAT_IN_BODY'));
+});
+
+test('a central node must name the claim it supports', () => {
+  const d = doc();
+  const n = d.nodes.find(x => x.central);
+  n.supports = [9];
+  assert.ok(verify(d, src()).errors.some(e => e.code === 'CENTRAL_NO_CLAIM' && e.nodeId === n.id));
+  delete n.supports;
+  assert.ok(verify(d, src()).errors.some(e => e.code === 'CENTRAL_NO_CLAIM'));
+});
+
+test('central is a few nodes; none at all warns and falls back to core', () => {
+  const d = doc();
+  for (const n of d.nodes) { delete n.central; delete n.supports; }
+  const w = verify(d, src()).warnings;
+  assert.ok(w.some(x => x.code === 'NO_CENTRAL'));
+  assert.ok(!w.some(x => x.code === 'QUIZ_OFF_CENTRAL'), 'the core fallback keeps old documents quiet');
+  for (const n of d.nodes) { n.central = true; n.supports = [0]; n.quiz = { ...(n.quiz ?? {}), mcq: d.nodes[1].quiz.mcq }; }
+  assert.ok(verify(d, src()).warnings.some(x => x.code === 'TOO_MANY_CENTRAL'));
 });

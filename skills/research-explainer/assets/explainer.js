@@ -1,9 +1,9 @@
 // Thin DOM layer. Everything it decides is decided in lib/.
 import { neighbors, linearOrder, ancestorsOf, isOpening } from './lib/tree.js';
-import { gradeMcq, recordAnswer, scheduleReasks } from './lib/quiz.js';
+import { gradeMcq, recordAnswer } from './lib/quiz.js';
 import { createStore } from './lib/storage.js';
 import { renderSidebar, renderNode, renderMasthead, renderChat, renderProse, renderSkillMap, renderSaveState, renderCheckpoint, escapeHtml, stepIndex } from './lib/render.js';
-import { nodeContext, buildTurns, promptBudget, essayPrompt, VERDICT_COPY, copyForError, isFatal, tierLabel, toolStatus, nextTier, appendTurns } from './lib/ask.js';
+import { nodeContext, buildTurns, promptBudget, copyForError, isFatal, tierLabel, toolStatus, nextTier, appendTurns } from './lib/ask.js';
 import { chunkSources, searchChunks, formatExcerpts, catalog, sourceTools } from './lib/sources.js';
 import { nextReveal } from './lib/typing.js';
 // One import per line: the bundler strips imports line by line.
@@ -11,7 +11,7 @@ import { tutorVariant, createTutor, levelOf, validateAssessment, applyPageSignal
 import { tellMove, difficultyMove, pretestMove, parseCommand, tutorTurns, gradePrompt } from './lib/tutor.js';
 import { pretestQuestion, needsPretest, recordPretest, skillRows, overallPercent, levelChangeCopy, saveState } from './lib/tutor.js';
 import { trackedNodes, placement, placeTutor, diagnosticLine, weakestAreas } from './lib/tutor.js';
-import { checkpointsFor, createRound, startRound, applyRound } from './lib/tutor.js';
+import { checkpointsFor, createRound, startRound, applyRound, recordRoundMcq } from './lib/tutor.js';
 
 const doc = window.NODES;
 if (doc) start(doc);
@@ -54,8 +54,9 @@ function start(doc) {
   if (state.tutor.pending && !byId.has(state.tutor.pending.node)) state.tutor.pending = null;
   // Quiz time: the tutor runs inline after each big section (lib/tutor.js checkpointsFor), one
   // round of questions per checkpoint, each round kept in this browser.
-  const checkpoints = variant === 'off' ? [] : checkpointsFor(nodes);
+  const checkpoints = checkpointsFor(nodes);
   const cpByAnchor = new Map(checkpoints.map(c => [c.anchor, c]));
+  const cpOfNode = new Map(checkpoints.flatMap(c => c.nodes.map(id => [id, c])));
   state.rounds = state.rounds && typeof state.rounds === 'object' ? state.rounds : {};
   delete state.chatMode; // the panel is Ask only
   let signalsInFlight = null;  // quiz signals that arrive while a tutor reply is streaming
@@ -174,7 +175,7 @@ function start(doc) {
   function levelMap() { return new Map(tracked.map(n => [n.id, levelOf(state.tutor, n.id)])); }
   function roundOf(cp) { return createRound(state.rounds[cp.id]); }
   function checkpointHtml(cp) {
-    return renderCheckpoint(cp, roundOf(cp), { titles: new Map(nodes.map(n => [n.id, n.title])), levels: levelMap() });
+    return renderCheckpoint(cp, roundOf(cp), { nodes: byId, levels: levelMap(), talk: tutorOn() });
   }
 
   // Evidence from the page's own quiz. Counted conservatively by lib/tutor.js.
@@ -191,10 +192,6 @@ function start(doc) {
     const node = byId.get(currentId);
     if (!node) return;
 
-    const schedule = scheduleReasks(state.answers, nodes);
-    const reaskId = schedule.get(currentId);
-    const reaskOf = reaskId && reaskId !== currentId ? byId.get(reaskId) : null;
-
     // Tutor-first: the section opens on one prediction question in place of its body.
     const gated = tutorOn() && variant === 'first' && !noGate && needsPretest(state.tutor, node);
     const question = gated ? pretestQuestion(node) : null;
@@ -202,9 +199,9 @@ function start(doc) {
     // The tree is always fully expanded: spec §10 prefers adjacent depth to hidden depth,
     // since expandable indexes tested ~50% slower. Ancestors are only highlighted.
     paintTree();
-    const cp = tutorOn() ? cpByAnchor.get(node.id) : null;
+    // Quiz time shows in every variant: its multiple choice needs no Claude.
+    const cp = cpByAnchor.get(node.id) ?? null;
     document.getElementById('content').innerHTML = renderNode(node, {
-      reaskOf,
       pretest: question,
       prediction: tutorOn() ? state.tutor.pretests[node.id] : null,
       checkpoint: cp ? checkpointHtml(cp) : '',
@@ -217,9 +214,7 @@ function start(doc) {
     wirePager('.prev', prev);
     wirePager('.next', next);
 
-    wireQuiz(document.getElementById('content'), node);
     drawMermaid(document.getElementById('content'));
-    if (reaskOf) wireQuiz(document.querySelector('.reask'), reaskOf);
     revealAsk();
     const about = document.querySelector('[data-chat-section]');
     if (about) about.textContent = node.title;
@@ -328,83 +323,35 @@ function start(doc) {
 
   function record(nodeId, index, correct) {
     state.answers[nodeId] = recordAnswer(state.answers[nodeId], index, correct);
+    const cp = cpOfNode.get(nodeId);
+    if (cp) state.rounds[cp.id] = recordRoundMcq(roundOf(cp), nodeId, correct);
     persist();
     paintTree();
     pageSignal(nodeId, { type: 'mcq', index, correct, total: byId.get(nodeId)?.quiz?.mcq?.length ?? 0 });
   }
 
-  // Questions whose nearest quiz owner is `root`. A re-ask box sits inside #content, so a plain
-  // querySelectorAll from #content would also wire the re-asked node's questions to this node:
-  // its handler fires first, grades the click against the wrong question, and records it under
-  // the wrong node.
-  function owned(root, selector) {
-    return [...root.querySelectorAll(selector)].filter(el => el.closest('.reask, #content') === root);
-  }
-
-  function wireQuiz(root, node) {
-    if (!root) return;
-
-    for (const section of owned(root, '[data-kind="mcq"]')) {
-      const mcq = node.quiz.mcq[Number(section.dataset.mcq)];
+  // Quiz time's multiple-choice questions: each graded on the first click, with the explanation
+  // shown at once, right or wrong (spec §7.1).
+  function wireQuiz(root) {
+    for (const section of root.querySelectorAll('[data-kind="mcq"]')) {
+      const node = byId.get(section.dataset.node);
+      const mcq = node?.quiz?.mcq?.[Number(section.dataset.mcq)];
+      if (!mcq) continue;
       section.querySelectorAll('[data-option]').forEach((btn) => {
         btn.addEventListener('click', () => {
           if (section.dataset.answered) return;
           section.dataset.answered = 'true';
           const chosen = Number(btn.dataset.option);
           const result = gradeMcq(mcq, chosen);
-
           section.querySelectorAll('[data-option]').forEach((b, j) => {
             b.classList.toggle('is-correct', j === result.correctIndex);
             b.classList.toggle('is-wrong', j === chosen && !result.correct);
           });
-
-          // Spec §7.1: the explanation always shows, immediately, right or wrong.
           showFeedback(section, result.correct, mcq.explanation, result.correct ? '' : result.why);
           record(node.id, Number(section.dataset.mcq), result.correct);
         });
       });
     }
-
-    for (const section of owned(root, '[data-kind="self"]')) wireSelfExplain(section, node);
-  }
-
-  // Spec §7.8: every question gets feedback, the self-explanation included. Claude judges the
-  // answer when it can; the author's model answer is shown either way, so a page opened outside
-  // a Claude viewer still gives the reader something to check against.
-  function wireSelfExplain(section, node) {
-    const input = section.querySelector('[data-self-input]');
-    const btn = section.querySelector('[data-self-check]');
-    const box = section.querySelector('[data-feedback]');
-    const model = node.quiz?.selfExplainAnswer ?? '';
-    const modelHtml = model ? `<p class="model-answer"><strong>Model answer:</strong> ${escapeHtml(model)}</p>` : '';
-
-    btn.addEventListener('click', async () => {
-      const answer = input.value.trim();
-      box.hidden = false;
-      if (!answer) {
-        box.innerHTML = '<p>Write your answer first, then check it.</p>';
-        return;
-      }
-      if (!sampleFn) {
-        box.innerHTML = `<p>Compare yours with the author's.</p>${modelHtml}`;
-        return;
-      }
-      btn.disabled = true;
-      box.innerHTML = '<p>Checking…</p>';
-      try {
-        const r = await sampleFn.json(essayPrompt(doc.meta, node, answer));
-        const verdict = VERDICT_COPY[r?.verdict] ?? '';
-        pageSignal(node.id, { type: 'self', verdict: r?.verdict });
-        box.innerHTML = (verdict ? `<p><strong>${escapeHtml(verdict)}</strong></p>` : '')
-          + `<p>${escapeHtml(String(r?.feedback ?? ''))}</p>${modelHtml}`;
-      } catch (e) {
-        const copy = e?.code === 'invalid_json' ? 'Claude could not grade that one.' : copyForError(e?.code);
-        box.innerHTML = (copy ? `<p>${escapeHtml(copy)}</p>` : '') + modelHtml;
-        if (isFatal(e?.code)) sampleFn = null;
-      } finally {
-        btn.disabled = false;
-      }
-    });
   }
 
   function setChatOpen(open, { focus = true } = {}) {
@@ -719,11 +666,15 @@ function start(doc) {
     if (!box) return;
     const surface = checkpointSurface(box);
     const round = roundOf(cp);
-    if (round.thread.length) {
-      restoreThread(surface, round.thread);
-      surface.thread.hidden = false;
-    }
+    if (surface.thread && round.thread.length) restoreThread(surface, round.thread);
+    const mcqs = box.querySelector('[data-cp-mcqs]');
+    if (mcqs) wireQuiz(mcqs);
     box.querySelector('[data-cp-start]')?.addEventListener('click', () => roundStep(cp, { action: 'start' }));
+    box.querySelector('[data-cp-reopen]')?.addEventListener('click', () => {
+      state.rounds[cp.id] = { ...roundOf(cp), skipped: false };
+      persist();
+      repaintCheckpoint(cp);
+    });
     box.querySelector('[data-cp-skip]')?.addEventListener('click', () => {
       stopExchange();
       state.rounds[cp.id] = { ...roundOf(cp), active: false, skipped: true };
@@ -800,8 +751,8 @@ function start(doc) {
     if ((action === 'tell' || action === 'harder' || action === 'easier') && !before.pending) action = 'start';
     let round = roundOf(cp);
     if (action === 'start') {
-      // A new round after a finished one starts a fresh thread; levels carry on.
-      round = { ...(round.finished ? createRound() : round), active: true, skipped: false, finished: false };
+      // A new round after a finished one starts a fresh thread; levels and answers carry on.
+      round = { ...(round.finished ? createRound({ mcq: round.mcq }) : round), thread: round.finished ? [] : round.thread, active: true, skipped: false, finished: false };
       state.rounds[cp.id] = round;
       persist();
       repaintCheckpoint(cp);
@@ -809,7 +760,6 @@ function start(doc) {
     const box = checkpointBox(cp);
     if (!box) return;
     const surface = checkpointSurface(box);
-    surface.thread.hidden = false;
     const said = { start: 'Quiz me on this part.', tell: 'Just tell me.', harder: 'Harder.', easier: 'Easier.' }[action] ?? text;
     const asked = { role: 'user', content: said };
     const lastQuestion = round.thread.findLast(t => t.role === 'assistant')?.content ?? '';
@@ -832,7 +782,7 @@ function start(doc) {
           }
           status('Thinking');
         }
-        step = before.pending ? applyRound(before, round, validateAssessment(raw), { cp, order }) : startRound(before, round, cp);
+        step = before.pending ? applyRound(before, round, validateAssessment(raw), { order }) : startRound(before, round, cp);
       } else if (action === 'tell') step = { ...tellMove(before, before.pending.node), round };
       else if (action === 'harder' || action === 'easier') step = { ...difficultyMove(before, action === 'harder' ? 1 : -1, before.pending.node), round };
       else step = startRound(before, round, cp);
@@ -847,6 +797,7 @@ function start(doc) {
         diagnostic: diagnosticLine(doc),
         titleOf: (id) => byId.get(id)?.title ?? id,
         weak: weakestAreas(step.tutor, tracked),
+        seed: target.quiz?.selfExplain ?? '',
         maxBytes,
       });
       return {

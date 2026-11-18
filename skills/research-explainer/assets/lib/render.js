@@ -1,7 +1,7 @@
 // Pure HTML string builders. No DOM access, no storage, no side effects.
 import { buildTree } from './tree.js';
 import { QUICK_PROMPTS, MODEL_TIERS } from './ask.js';
-import { LEVEL_NAMES, MAX_LEVEL } from './tutor.js';
+import { LEVEL_NAMES, MAX_LEVEL, TALK_PER_ROUND as TALK_COUNT } from './tutor.js';
 
 export function escapeHtml(text) {
   return String(text ?? '')
@@ -118,35 +118,19 @@ export function renderSidebar(nodes, { currentId, passed = new Set(), levels = n
   return `<ul class="tree-root">${buildTree(nodes).map(item).join('')}</ul>`;
 }
 
-export function renderQuiz(node) {
-  const q = node.quiz ?? {};
-  const parts = [];
-
-  for (const [i, m] of (q.mcq ?? []).entries()) {
-    // Option order is preserved from the document; correctness is never emitted here.
+// A section's multiple-choice question, as quiz time shows it. Option order is preserved from the
+// document; correctness is never emitted here.
+export function renderMcqs(node) {
+  return (node.quiz?.mcq ?? []).map((m, i) => {
     const options = (m.options ?? []).map((o, j) =>
       `<li><button class="option" data-option="${j}">${escapeHtml(o.text)}</button></li>`).join('');
-    parts.push(`
-      <section class="quiz-item" data-kind="mcq" data-mcq="${i}">
+    return `
+      <section class="quiz-item" data-kind="mcq" data-node="${escapeHtml(node.id)}" data-mcq="${i}">
         <p class="prompt">${escapeHtml(m.stem)}</p>
         <ul class="options">${options}</ul>
         <div class="feedback" data-feedback hidden></div>
-      </section>`);
-  }
-
-  // Spec §7.8: the self-explanation gets feedback too. With Claude available it judges the
-  // answer; without, the check reveals the author's model answer to compare against.
-  if (q.selfExplain) {
-    parts.push(`
-      <section class="quiz-item" data-kind="self">
-        <p class="prompt">${escapeHtml(q.selfExplain)}</p>
-        <textarea class="self-explain" rows="3" data-self-input aria-label="Your answer"></textarea>
-        <button class="self-check" type="button" data-self-check>Check my answer</button>
-        <div class="feedback" data-feedback hidden></div>
-      </section>`);
-  }
-
-  return parts.length ? `<div class="quiz"><h3>Check yourself</h3>${parts.join('')}</div>` : '';
+      </section>`;
+  }).join('');
 }
 
 // Spec §6.7: front-load the claim. (The §10 note warning that the questions feel slower was
@@ -188,31 +172,31 @@ export function renderPrediction(pretest) {
     </aside>`;
 }
 
-// Quiz time: the tutor, inline, after a big section. Nothing is asked until the reader starts it,
-// and skipping is always one click. Its thread, controls and the skill map live inside the block.
-export function renderCheckpoint(cp, round, { titles = new Map(), levels = new Map() } = {}) {
-  const covers = cp.nodes.map(id => {
-    const lvl = levels.get(id) ?? 0;
-    return `<li>${escapeHtml(titles.get(id) ?? id)} ${renderLevel(lvl)}</li>`;
-  }).join('');
-  const state = round.skipped ? 'skipped' : round.finished ? 'finished' : round.active ? 'running' : 'idle';
-  const lead = {
-    idle: `A few questions on what you just read, one per section. Skip it if you have it.`,
-    running: '',
-    finished: 'Round done. A level rises after two right answers on a section, one of them without help, so levels move over rounds.',
-    skipped: 'Skipped.',
-  }[state];
-  return `
-    <section class="checkpoint" data-checkpoint="${escapeHtml(cp.id)}" data-state="${state}" aria-label="Quiz time: ${escapeHtml(cp.title)}">
-      <header class="checkpoint-head">
-        <h3>Quiz time <span class="checkpoint-title">· ${escapeHtml(cp.title)}</span></h3>
-        ${state === 'running' ? '<button class="link-button" type="button" data-cp-skip>Skip</button>' : ''}
-      </header>
-      ${lead ? `<p class="checkpoint-lead">${escapeHtml(lead)}</p>` : ''}
-      ${state === 'idle' || state === 'finished' ? `<ul class="checkpoint-covers">${covers}</ul>` : ''}
-      <div class="thread checkpoint-thread" data-cp-thread aria-live="polite"${state === 'running' || state === 'finished' ? '' : ' hidden'}></div>
+// Quiz time, after a big section: the multiple-choice questions on its central sections first
+// (instant, no Claude), then, where Claude is available, a short conversation on what was missed.
+// Nothing is asked of Claude until the reader starts the conversation, and skipping is one click.
+export function renderCheckpoint(cp, round, { nodes = new Map(), levels = new Map(), talk = false } = {}) {
+  const title = (id) => nodes.get(id)?.title ?? id;
+  const answered = Object.keys(round.mcq).filter(id => cp.nodes.includes(id));
+  const right = answered.filter(id => round.mcq[id]).length;
+  const state = round.skipped ? 'skipped' : round.finished ? 'finished' : round.active ? 'talk' : 'mcq';
+  const covers = cp.nodes.map(id => `<li>${escapeHtml(title(id))} ${renderLevel(levels.get(id) ?? 0)}</li>`).join('');
+  const mcqs = cp.nodes.map(id => nodes.get(id)).filter(Boolean).map(renderMcqs).join('');
+  const summary = answered.length
+    ? `<p class="checkpoint-lead">Multiple choice: ${right} of ${answered.length} right.</p>` : '';
+  const talkCount = Math.min(TALK_COUNT, cp.nodes.length);
+  const body = {
+    mcq: `
+      <p class="checkpoint-lead">${cp.nodes.length === 1 ? 'One question' : `${cp.nodes.length} quick questions`} on the main ideas above${talk ? `, then ${talkCount} to talk through with the tutor` : ''}. Skip it if you have it.</p>
+      <div class="checkpoint-mcqs" data-cp-mcqs>${mcqs}</div>
+      <div class="checkpoint-actions">
+        ${talk ? `<button class="self-check" type="button" data-cp-start>Next: ${talkCount} question${talkCount === 1 ? '' : 's'} from the tutor</button>` : ''}
+        <button class="link-button" type="button" data-cp-skip>Skip</button>
+      </div>`,
+    talk: `
+      ${summary}
+      <div class="thread checkpoint-thread" data-cp-thread aria-live="polite"></div>
       <div class="checkpoint-sheet" data-cp-sheet hidden></div>
-      ${state === 'running' ? `
       <form class="composer" data-cp-form>
         <textarea data-cp-input rows="1" placeholder="Answer the tutor…" aria-label="Answer the tutor"></textarea>
         <button type="submit" data-cp-send>Send</button>
@@ -223,11 +207,27 @@ export function renderCheckpoint(cp, round, { titles = new Map(), levels = new M
         <button class="chip" type="button" data-cp-action="harder">Harder</button>
         <button class="chip" type="button" data-cp-action="map" aria-expanded="false">Progress</button>
         <button class="chip" type="button" data-cp-action="save" aria-expanded="false">Save state</button>
-      </div>` : `
+        <button class="link-button" type="button" data-cp-skip>Skip</button>
+      </div>`,
+    finished: `
+      ${summary}
+      <div class="thread checkpoint-thread" data-cp-thread aria-live="polite"></div>
+      <p class="checkpoint-lead">Round done. A level rises after two right answers on a section, one of them without help, so levels move over rounds.</p>
+      <ul class="checkpoint-covers">${covers}</ul>
       <div class="checkpoint-actions">
-        <button class="self-check" type="button" data-cp-start>${state === 'finished' ? 'Another round' : state === 'skipped' ? 'Start quiz time' : 'Start'}</button>
-        ${state === 'idle' ? '<button class="link-button" type="button" data-cp-skip>Skip</button>' : ''}
-      </div>`}
+        ${talk ? '<button class="self-check" type="button" data-cp-start>Another round</button>' : ''}
+      </div>`,
+    skipped: `
+      <div class="checkpoint-actions">
+        <button class="link-button" type="button" data-cp-reopen>Skipped. Open quiz time</button>
+      </div>`,
+  }[state];
+  return `
+    <section class="checkpoint" data-checkpoint="${escapeHtml(cp.id)}" data-state="${state}" aria-label="Quiz time: ${escapeHtml(cp.title)}">
+      <header class="checkpoint-head">
+        <h3>Quiz time <span class="checkpoint-title">· ${escapeHtml(cp.title)}</span></h3>
+      </header>
+      ${body}
     </section>`;
 }
 
@@ -307,6 +307,18 @@ export function renderDiagram(diagram) {
     </figure>`;
 }
 
+// Rule 6.22: what the author could not verify. Small, grey and collapsed: it matters for trust,
+// but it is not part of the explanation.
+export function renderCaveats(caveats) {
+  const text = String(caveats ?? '').trim();
+  if (!text) return '';
+  return `
+      <details class="caveats">
+        <summary>What could not be checked</summary>
+        ${renderProse(text)}
+      </details>`;
+}
+
 // Rule 6.21: every section says where it came from, under its subtitle, as links.
 export function renderNodeSources(node) {
   const items = (node.sources ?? []).filter(s => s?.label).map(s => {
@@ -316,12 +328,7 @@ export function renderNodeSources(node) {
   return items.length ? `<p class="node-sources">From ${items.join(' · ')}</p>` : '';
 }
 
-export function renderNode(node, { reaskOf = null, pretest = null, prediction = null, checkpoint = '' } = {}) {
-  const reask = reaskOf ? `
-    <aside class="reask" data-reask="${escapeHtml(reaskOf.id)}">
-      <p>Back to a question you missed earlier: <strong>${escapeHtml(reaskOf.title)}</strong>.</p>
-      ${renderQuiz(reaskOf)}
-    </aside>` : '';
+export function renderNode(node, { pretest = null, prediction = null, checkpoint = '' } = {}) {
 
   // A diagram is either hand-drawn inline SVG or Mermaid source. Mermaid ships as text and is drawn
   // in the page (explainer.js), because process diagrams are where most explainers need a picture
@@ -364,7 +371,6 @@ export function renderNode(node, { reaskOf = null, pretest = null, prediction = 
         ${renderNodeSources(node)}
       </header>
       ${renderPrediction(prediction)}
-      ${reask}
       <div class="layer layer-intuition">${renderProse(node.spiral?.intuition)}</div>
       ${diagram}
       ${figures}
@@ -375,7 +381,7 @@ export function renderNode(node, { reaskOf = null, pretest = null, prediction = 
         ${renderProse(node.spiral.formal)}
       </details>` : ''}
       ${wrongTurn}
-      ${renderQuiz(node)}
+      ${renderCaveats(node.caveats)}
       ${checkpoint}
     </article>`;
 }
