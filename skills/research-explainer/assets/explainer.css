@@ -337,7 +337,10 @@ body.chat-open .theme-toggle { right: calc(var(--chat) + 1rem); }
 @media (max-width: 720px) {
   body, body.chat-open { grid-template-columns: 1fr; }
   .chat { position: fixed; inset: 0; z-index: 20; height: auto; border-left: none; }
-  body.chat-open .theme-toggle { right: 1rem; }
+  /* At phone width the toggle stays at the top of the page beside the title, instead of floating
+     over the text as the reader scrolls. */
+  .theme-toggle, body.chat-open .theme-toggle { position: absolute; top: 1.2rem; right: 1rem; }
+  .doc-title { padding-right: 4.5rem; }
   .sidebar { position: static; height: auto; border-right: none;
     border-bottom: 1px solid var(--border); }
   main { padding: 2rem 1rem 4rem; }

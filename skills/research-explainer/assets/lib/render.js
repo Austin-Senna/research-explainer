@@ -359,8 +359,8 @@ export function renderNode(node, { pretest = null, prediction = null, checkpoint
 
   const wrongTurn = node.wrongTurn ? `
     <aside class="wrong-turn">
-      <p class="belief">${escapeHtml(node.wrongTurn.belief)}…</p>
-      <p class="correction">${escapeHtml(node.wrongTurn.correction)}</p>
+      <p class="belief">${inline(escapeHtml(node.wrongTurn.belief))}…</p>
+      <p class="correction">${inline(escapeHtml(node.wrongTurn.correction))}</p>
     </aside>` : '';
 
   if (pretest) {

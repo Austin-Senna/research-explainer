@@ -222,3 +222,10 @@ test('caveats render collapsed under their own small heading, and nothing render
   assert.doesNotMatch(html, /<details class="caveats" open/);
   assert.doesNotMatch(renderNode(nodeById('scaled-dot-product')), /caveats/);
 });
+
+test('a wrong turn renders links and emphasis like the body does', () => {
+  const n = { ...nodeById('scaled-dot-product'), wrongTurn: { belief: 'If you think **X**', correction: '[Vafa et al.](https://arxiv.org/abs/2406.03689) show otherwise.' } };
+  const html = renderNode(n);
+  assert.match(html, /<p class="belief">If you think <strong>X<\/strong>/);
+  assert.match(html, /<p class="correction"><a href="https:\/\/arxiv.org\/abs\/2406.03689">Vafa et al.<\/a> show otherwise/);
+});
