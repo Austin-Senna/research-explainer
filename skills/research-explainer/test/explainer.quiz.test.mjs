@@ -7,7 +7,7 @@ const doc = () => JSON.parse(readFileSync(new URL('./fixtures/attention.nodes.js
 const nodeById = (id) => doc().nodes.find(n => n.id === id);
 
 test('mcq grading reports the correct index and its why', () => {
-  const mcq = nodeById('scaled-dot-product').quiz.mcq[1];
+  const mcq = nodeById('scaled-dot-product').quiz.mcq[0];
   const right = gradeMcq(mcq, 0);
   assert.equal(right.correct, true);
   assert.equal(right.correctIndex, 0);

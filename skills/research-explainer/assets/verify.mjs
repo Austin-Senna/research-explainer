@@ -1,7 +1,7 @@
 // Spec §8 verification. Blocking errors fail the build; warnings are reported only.
 // Deliberately deterministic code, never an LLM judge — see the design doc's cost notes.
 
-const NODE_REQUIRED = ['id', 'title', 'kind', 'order', 'hook', 'spiral', 'quiz', 'sources'];
+const NODE_REQUIRED = ['id', 'title', 'kind', 'order', 'hook', 'spiral', 'sources'];
 const SPIRAL_LAYERS = ['intuition', 'concrete', 'formal'];
 const KINDS = new Set(['prereq', 'core', 'extension']);
 
@@ -71,7 +71,10 @@ export function checkQuizzes(doc, sourceText, errors) {
     // Quizzes are multiple choice only. A leftover cloze would be silently dropped by the
     // renderer, so it fails loudly here instead.
     if (q.cloze) err(errors, 'CLOZE_UNSUPPORTED', n.id, 'cloze is no longer supported; rewrite it as an mcq');
-    if (!Array.isArray(q.mcq) || q.mcq.length === 0) err(errors, 'NO_MCQ', n.id, 'node has no multiple-choice question');
+    // Rule 7.7: the page's own retrieval check sits on the core nodes; the tutor covers the rest.
+    if (n.kind === 'core' && (!Array.isArray(q.mcq) || q.mcq.length === 0)) {
+      err(errors, 'NO_MCQ', n.id, 'core node has no multiple-choice question');
+    }
     // Spec §7.8: the self-explanation gets feedback like every other question, and the model
     // answer is what the reader compares against when Claude cannot judge it.
     if (q.selfExplain && !String(q.selfExplainAnswer ?? '').trim()) {
@@ -136,7 +139,13 @@ export function checkGraph(doc, errors) {
       }
     }
 
-    if (n.diagram && !n.diagram.svg && !n.diagram.mermaid) {
+    const drawn = (x) => Boolean(x?.svg || x?.mermaid);
+    if (n.diagram && Array.isArray(n.diagram.steps) && n.diagram.steps.length) {
+      // Rule 9.9: each step is a full redraw with one part added, so each needs its own drawing.
+      n.diagram.steps.forEach((st, i) => {
+        if (!drawn(st)) err(errors, 'MISSING_FIELD', n.id, `diagram step ${i + 1} needs svg or mermaid`);
+      });
+    } else if (n.diagram && !drawn(n.diagram)) {
       err(errors, 'MISSING_FIELD', n.id, 'diagram needs svg or mermaid');
     }
     if (n.diagram && !String(n.diagram.alt ?? '').trim()) {
@@ -170,7 +179,13 @@ export function checkGraph(doc, errors) {
 const MAX_CUES = 10;
 const MAX_BLOCK_WORDS = 250;
 // Rule 6.8: explanation words per node, by kind. Core carries the paper; support stays short.
-export const WORD_BUDGET = { prereq: 150, extension: 200, core: 350 };
+export const WORD_BUDGET = { prereq: 220, extension: 220, core: 300 };
+// The collapsed Details block (spiral.formal) is opt-in depth, but still capped.
+export const DETAILS_BUDGET = 250;
+const MAX_MCQ = 1;
+const STEP_CUES = 5;
+const NARRATION = /\bI(?:'m| am| will|'ll| asked| want you)\b|\b(?:the key insight|the one idea to hold onto|the thing to walk away with|here is where it gets interesting|this is the tricky part|worth (?:slowing down|pausing) on|at its core|TL;DR)\b|\bwill feel (?:slower|harder|worse)\b/i;
+const VAGUE_SOURCE = /\b(?:researchers?|studies|a study|a (?:review|survey|paper)(?: of [^.]{0,40})?|one of (?:these|the) papers|(?:some|recent|prior) work|the literature|experts)\b[^.]{0,80}\b(?:show(?:s|n|ed)?|f(?:ou|i)nds?|found|suggests?|reports?|argues?|argued)\b/i;
 const CONNECTIVES = ['but', 'therefore', 'so', 'because', 'however', 'yet', 'instead', 'which is why', 'unless'];
 
 function warn(list, code, nodeId, message) { list.push({ code, nodeId, message }); }
@@ -179,6 +194,15 @@ export function checkWarnings(doc, warnings) {
   const nodes = [...(doc.nodes ?? [])].sort((a, b) => a.order - b.order);
   // Rule 7.10: the default tutor opens only the sections that carry quiz.predict, and those
   // should be the few core ones worth predicting. None at all means it never opens with one.
+  for (const n of nodes) {
+    const q = n.quiz ?? {};
+    if (n.kind !== 'core' && ((q.mcq ?? []).length || q.selfExplain)) {
+      warn(warnings, 'QUIZ_ON_SUPPORT', n.id, `a ${n.kind} node carries page questions; the tutor covers support nodes`);
+    }
+    if (n.kind === 'core' && (q.mcq ?? []).length > MAX_MCQ) {
+      warn(warnings, 'TOO_MANY_MCQ', n.id, `${q.mcq.length} multiple-choice questions; a core node gets ${MAX_MCQ}`);
+    }
+  }
   if (nodes.length && !nodes.some(n => String(n.quiz?.predict ?? '').trim())) {
     warn(warnings, 'NO_PREDICT', null, 'no node has quiz.predict; the tutor-first page never opens with a prediction');
   }
@@ -188,13 +212,39 @@ export function checkWarnings(doc, warnings) {
     }
   }
 
-  // Rule 6.8: length follows importance. Explanation words are the spiral plus the wrong turn.
+  // Rule 6.8: length follows importance. Visible words are the intuition, the concrete layer and
+  // the wrong turn; the formal layer sits collapsed under Details and has its own cap.
   for (const n of nodes) {
     const budget = WORD_BUDGET[n.kind];
     if (!budget) continue;
-    const words = [n.spiral?.intuition, n.spiral?.concrete, n.spiral?.formal, n.wrongTurn?.belief, n.wrongTurn?.correction]
+    const words = [n.spiral?.intuition, n.spiral?.concrete, n.wrongTurn?.belief, n.wrongTurn?.correction]
       .reduce((sum, t) => sum + normalizeWords(t ?? '').length, 0);
-    if (words > budget) warn(warnings, 'OVER_BUDGET', n.id, `${words} words; a ${n.kind} node gets ${budget}`);
+    if (words > budget) warn(warnings, 'OVER_BUDGET', n.id, `${words} visible words; a ${n.kind} node gets ${budget}`);
+    const details = normalizeWords(n.spiral?.formal ?? '').length;
+    if (details > DETAILS_BUDGET) warn(warnings, 'LONG_DETAILS', n.id, `${details} words under Details; cap is ${DETAILS_BUDGET}`);
+  }
+
+  // Prose the reader sees, per node, for the style checks below.
+  const prose = (n) => [n.hook, n.spiral?.intuition, n.spiral?.concrete, n.spiral?.formal,
+    n.wrongTurn?.belief, n.wrongTurn?.correction].filter(Boolean).join('\n');
+  const sentences = (t) => String(t).split(/(?<=[.!?])\s+|\n+/);
+
+  for (const n of nodes) {
+    const text = prose(n);
+    // Rule 6.16: the page explains the subject, never itself or the reader's feelings.
+    const narration = text.match(NARRATION);
+    if (narration) warn(warnings, 'NARRATION', n.id, `"${narration[0]}": say the thing, not what the page is doing`);
+    // Rule 6.16: no em dashes. Use a period, a colon or a comma.
+    const dashes = (text.match(/\u2014/g) ?? []).length;
+    if (dashes) warn(warnings, 'EM_DASH', n.id, `${dashes} em dash${dashes > 1 ? 'es' : ''}`);
+    // Rule 6.21: a claim credited to other people names them, with a link, in the same sentence.
+    const vague = sentences(text).find(x => VAGUE_SOURCE.test(x) && !/\]\(https?:\/\//.test(x));
+    if (vague) warn(warnings, 'UNNAMED_SOURCE', n.id, `"${vague.slice(0, 80)}": name the source as [title](url)`);
+    // Rule 9.9: a picture with five or more parts is built up step by step.
+    const d = n.diagram;
+    if (d && !d.steps?.length && typeof d.cueCount === 'number' && d.cueCount >= STEP_CUES) {
+      warn(warnings, 'ALL_AT_ONCE', n.id, `diagram shows ${d.cueCount} parts at once; build it up in steps`);
+    }
   }
 
   // Rule 6.5: the idea comes before its name. A term in bold in the opening sentence is a

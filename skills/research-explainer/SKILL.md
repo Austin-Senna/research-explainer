@@ -300,14 +300,15 @@ branches. Breadth is cheap; depth is expensive. 10–20 items per level is fine 
     "wrongTurn": { "belief": "If you're thinking X here…", "correction": "…why that's wrong" },  // core; optional elsewhere
     // explanation budget (spiral + wrongTurn): prereq 150 words, extension 200, core 350 (§6.8)
     "diagram": { "svg" | "mermaid", "alt", "cueCount": 7, "kind": "onion|dataflow|comparison|result" },
+    //   five or more parts → "steps": [{ "svg" | "mermaid", "alt", "caption" }], each a redraw adding one part (§9.9)
     "figures": [{ "src": "figures/x.png", "alt", "caption", "credit", "url" }],  // inlined by the build
-    "quiz": {
-      "mcq":   [{ "stem", "options": [{ "text", "correct", "why" }], "explanation" }],  // 1-3 per node, multiple choice only
+    "quiz": {  // core nodes only (§7.7)
+      "mcq":   [{ "stem", "options": [{ "text", "correct", "why" }], "explanation" }],  // exactly one, multiple choice
       "selfExplain": "Conceptualize in one sentence why …",
       "selfExplainAnswer": "the author's one-sentence model answer",  // required: Claude grades against it, and it is shown as feedback
       "predict": "one question the reader can reason about from the overview and this node's hook alone?"  // optional, core nodes only, few of them; opens the node in the default tutor (§7.10)
     },
-    "sources": [{ "label", "url", "locator": "§3.2.1" }]
+    "sources": [{ "label", "url", "locator": "§3.2.1" }]  // shown as links under the subtitle; also cite inline as [title](url) (§6.21)
   }]
 }
 ```

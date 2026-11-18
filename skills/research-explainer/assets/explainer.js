@@ -2,7 +2,7 @@
 import { neighbors, linearOrder, ancestorsOf, isOpening } from './lib/tree.js';
 import { gradeMcq, recordAnswer, scheduleReasks } from './lib/quiz.js';
 import { createStore } from './lib/storage.js';
-import { renderSidebar, renderNode, renderMasthead, renderChat, renderProse, renderSkillMap, renderSaveState, escapeHtml } from './lib/render.js';
+import { renderSidebar, renderNode, renderMasthead, renderChat, renderProse, renderSkillMap, renderSaveState, escapeHtml, stepIndex } from './lib/render.js';
 import { nodeContext, buildTurns, promptBudget, essayPrompt, VERDICT_COPY, copyForError, isFatal, tierLabel, toolStatus, nextTier, appendTurns } from './lib/ask.js';
 import { chunkSources, searchChunks, formatExcerpts, catalog, sourceTools } from './lib/sources.js';
 import { nextReveal } from './lib/typing.js';
@@ -10,6 +10,7 @@ import { nextReveal } from './lib/typing.js';
 import { tutorVariant, createTutor, levelOf, validateAssessment, applyAssessment, applyPageSignal } from './lib/tutor.js';
 import { openMove, tellMove, difficultyMove, pretestMove, parseCommand, tutorTurns, gradePrompt } from './lib/tutor.js';
 import { pretestQuestion, needsPretest, recordPretest, skillRows, overallPercent, levelChangeCopy, saveState } from './lib/tutor.js';
+import { trackedNodes, placement, placeTutor, diagnosticLine, weakestAreas } from './lib/tutor.js';
 
 const doc = window.NODES;
 if (doc) start(doc);
@@ -46,7 +47,9 @@ function start(doc) {
   // without it every variant is the plain page: nothing below shows or hides anything until
   // sampleFn is set. Declared before the first render() for the same reason as sampleFn.
   const variant = tutorVariant(window.TUTOR);
-  state.tutor = createTutor(state.tutor);
+  // The skill map is the core nodes; the Phase 3 diagnostic sets where it starts, once.
+  const tracked = trackedNodes(nodes);
+  state.tutor = placeTutor(createTutor(state.tutor), placement(doc));
   if (state.tutor.pending && !byId.has(state.tutor.pending.node)) state.tutor.pending = null;
   state.chatMode = variant !== 'off' && state.chatMode === 'tutor' ? 'tutor' : 'ask';
   let tutorApi = null;         // set once the chat is wired
@@ -86,6 +89,26 @@ function start(doc) {
       if (variant !== 'off') render({ keepScroll: true, noGate: window.scrollY > 40 });
     }
   }
+
+  // Step-by-step diagrams (rule 9.9): Back / Next show one step at a time. A step's Mermaid is
+  // drawn the first time it is shown, since Mermaid cannot lay out a hidden element.
+  document.getElementById('content').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-step-go]');
+    if (!btn) return;
+    const fig = btn.closest('.diagram-steps');
+    const panels = [...fig.querySelectorAll('.diagram-step')];
+    const current = panels.findIndex(p => !p.hidden);
+    const next = stepIndex(current, Number(btn.dataset.stepGo), panels.length);
+    panels.forEach((p, i) => { p.hidden = i !== next; });
+    for (const pre of panels[next].querySelectorAll('[data-mermaid-deferred]')) {
+      pre.removeAttribute('data-mermaid-deferred');
+      pre.setAttribute('data-mermaid', '');
+    }
+    drawMermaid(panels[next]);
+    fig.querySelector('[data-step-go="-1"]').disabled = next === 0;
+    fig.querySelector('[data-step-go="1"]').disabled = next === panels.length - 1;
+    fig.querySelector('.step-count').textContent = `Step ${next + 1} of ${panels.length}`;
+  });
 
   // Figures are capped to the text column; a click shows one full size. Esc or any click closes it.
   document.getElementById('content').addEventListener('click', (e) => {
@@ -134,7 +157,7 @@ function start(doc) {
     // Levels show once the tutor is in play: from the start in the tutor-first variant, and after
     // the reader first uses the tutor in the panel variant, which otherwise reads as it always has.
     const levels = tutorOn() && (variant === 'first' || state.tutor.started)
-      ? new Map(nodes.map(n => [n.id, levelOf(state.tutor, n.id)])) : null;
+      ? new Map(tracked.map(n => [n.id, levelOf(state.tutor, n.id)])) : null;
     document.getElementById('tree').innerHTML = renderSidebar(nodes, { currentId, passed: passedSet(), levels });
     for (const a of ancestorsOf(nodes, currentId)) {
       document.querySelector(`[data-id="${CSS.escape(a.id)}"]`)?.classList.add('is-ancestor');
@@ -656,7 +679,7 @@ function start(doc) {
     const bar = panel.querySelector('[data-tutor-bar]');
     const drafts = { ask: '', tutor: '' };
     let sheetKind = null;
-    const order = linearOrder(nodes).map(n => n.id);
+    const order = tracked.map(n => n.id);
 
     restoreThread('tutor');
     for (const btn of panel.querySelectorAll('[data-mode]')) {
@@ -702,13 +725,13 @@ function start(doc) {
 
     function paintSheet() {
       if (sheetKind === 'map') {
-        sheet.innerHTML = renderSkillMap(skillRows(state.tutor, nodes, currentId), overallPercent(state.tutor, nodes));
+        sheet.innerHTML = renderSkillMap(skillRows(state.tutor, tracked, currentId), overallPercent(state.tutor, tracked));
         for (const link of sheet.querySelectorAll('.map a')) {
           // At phone width the panel covers the page, so following a link has to put it away.
           link.addEventListener('click', () => { if (isNarrow()) setChatOpen(false); });
         }
       } else if (sheetKind === 'save') {
-        sheet.innerHTML = renderSaveState(saveState(doc.meta, nodes, state.tutor, currentId));
+        sheet.innerHTML = renderSaveState(saveState(doc.meta, tracked, state.tutor, currentId));
         sheet.querySelector('[data-save-copy]').addEventListener('click', copySaved);
       }
       sheet.querySelector('[data-sheet-close]')?.addEventListener('click', closeSheet);
@@ -806,6 +829,9 @@ function start(doc) {
           answered: before.pending ? byId.get(before.pending.node) : null,
           guess: pretest?.guess,
           question: pretest?.question,
+          diagnostic: diagnosticLine(doc),
+          titleOf: (id) => byId.get(id)?.title ?? id,
+          weak: weakestAreas(step.tutor, tracked),
           maxBytes,
         });
         return {

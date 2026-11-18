@@ -65,7 +65,7 @@ export function createTutor(saved) {
   const skills = {};
   for (const [id, v] of Object.entries(s.skills && typeof s.skills === 'object' ? s.skills : {})) skills[id] = normalizeSkill(v);
   const pending = s.pending && typeof s.pending.node === 'string'
-    ? { node: s.pending.node, kind: ['review', 'defense'].includes(s.pending.kind) ? s.pending.kind : 'check' }
+    ? { node: s.pending.node, kind: ['review', 'defense', 'final', 'integrate'].includes(s.pending.kind) ? s.pending.kind : 'check' }
     : null;
   return {
     thread: Array.isArray(s.thread) ? s.thread : [],
@@ -79,7 +79,67 @@ export function createTutor(saved) {
     pretests: s.pretests && typeof s.pretests === 'object' ? { ...s.pretests } : {},
     pretestOff: Boolean(s.pretestOff),
     started: Boolean(s.started),
+    placed: Boolean(s.placed),                  // starting levels taken from the diagnostic, once
+    final: normalizeFinal(s.final),             // the closing mixed assessment, when it is running or done
   };
+}
+
+function normalizeFinal(f) {
+  if (!f || typeof f !== 'object') return null;
+  if (f.done) return { done: true, queue: [] };
+  const queue = Array.isArray(f.queue) ? f.queue.filter(id => typeof id === 'string') : [];
+  return { done: false, queue };
+}
+
+// socratic-tutor keeps 4-10 subskills. The skill map is the core nodes: the paper itself.
+// Prerequisites and extensions can still be tutored on request, but they are not leveled toward
+// the target and never hold up the final assessment. A document with no core nodes (older
+// explainers) tracks every node.
+export function trackedNodes(nodes) {
+  const core = linearOrder(nodes).filter(n => n.kind === 'core');
+  return core.length ? core : linearOrder(nodes);
+}
+
+// socratic-tutor places the learner before teaching. The explainer's Phase 3 diagnostic already
+// did that in the terminal, so it is read instead of asked again: a tracked node that introduces
+// a concept the reader showed they know starts at "can follow along". Nothing is ever placed
+// higher than that, and a level already earned is never lowered.
+export const PLACEMENT_LEVEL = 2;
+export function placement(doc) {
+  const tracked = new Set(trackedNodes(doc?.nodes ?? []).map(n => n.id));
+  const out = {};
+  for (const r of doc?.diagnostic?.results ?? []) {
+    const id = doc?.concepts?.[r?.concept]?.introducedBy;
+    if (r?.known === true && id && tracked.has(id)) out[id] = PLACEMENT_LEVEL;
+  }
+  return out;
+}
+
+export function placeTutor(tutor, placed) {
+  if (tutor?.placed) return tutor;
+  const next = structuredClone(createTutor(tutor));
+  for (const [id, level] of Object.entries(placed ?? {})) {
+    const skill = normalizeSkill(next.skills[id]);
+    skill.level = Math.max(skill.level, clampLevel(level));
+    next.skills[id] = skill;
+  }
+  next.placed = true;
+  return next;
+}
+
+// What the diagnostic found, in one line for the tutor's prompt, so questions are pitched at
+// what the reader does and does not already know.
+export function diagnosticLine(doc) {
+  const results = doc?.diagnostic?.results ?? [];
+  const known = results.filter(r => r?.known === true).map(r => r.concept);
+  const unknown = results.filter(r => r?.known === false).map(r => r.concept);
+  if (!known.length && !unknown.length) return '';
+  return `From the reader's diagnostic: knows ${known.join(', ') || 'none of the probed concepts'}; `
+    + `did not know ${unknown.join(', ') || 'none'}.`;
+}
+
+function allAtTarget(tutor, order) {
+  return order.length > 0 && order.every(id => levelOf(tutor, id) >= TARGET_LEVEL);
 }
 
 export function skillOf(tutor, id) { return normalizeSkill(tutor?.skills?.[id]); }
@@ -146,14 +206,17 @@ export function pickReview(tutor, order, focus) {
 }
 
 function settle(tutor, move, changes = []) {
-  tutor.pending = move.type === 'none' ? tutor.pending : { node: move.node, kind: move.kind };
+  tutor.pending = move.type === 'none' ? tutor.pending
+    : move.type === 'complete' ? null
+    : { node: move.node, kind: move.kind };
   tutor.started = true;
   return { tutor, move, changes };
 }
 
 // THE transition. Given the state, a validated verdict on the open question, and the section the
 // reader is on, return the new state, the tutor's next move and any level changes. Pure.
-//   move.type: question | narrow | probe | explain | devil | review | reask
+//   move.type: question | narrow | probe | explain | devil | review | reask | final | integrate | complete
+// `order` is the tracked nodes in reading order: what reviews and the final assessment draw on.
 export function applyAssessment(tutor, assessment, { focus, order = [] } = {}) {
   const pending = tutor?.pending;
   // Nothing open, or nothing gradable: no evidence, no level change.
@@ -168,6 +231,31 @@ export function applyAssessment(tutor, assessment, { focus, order = [] } = {}) {
   next.turn += 1;
   skill.lastTurn = next.turn;
   skill.covered = true;
+
+  // The final assessment: one question per tracked node, then one that connects them. Any miss
+  // ends it, counts as a failed review, and sends the learner back to the loop.
+  if (pending.kind === 'final' || pending.kind === 'integrate') {
+    skill.strikes = 0;
+    skill.told = false;
+    if (assessment.result !== 'correct') {
+      if (pending.kind === 'final' && skill.level > 0) {
+        changes.push({ node: pending.node, from: skill.level, to: skill.level - 1 });
+        skill.level -= 1;
+        skill.evidence = [];
+      }
+      next.final = null;
+      skill.strikes = 1;
+      return settle(next, { type: 'narrow', node: pending.node, kind: 'check', after: 'review' }, changes);
+    }
+    if (pending.kind === 'integrate') {
+      next.final = { done: true, queue: [] };
+      return settle(next, { type: 'complete', node: pending.node, kind: 'check' }, changes);
+    }
+    const queue = (next.final?.queue ?? []).filter(id => id !== pending.node);
+    next.final = { done: false, queue };
+    if (queue.length) return settle(next, { type: 'final', node: queue[0], kind: 'final' }, changes);
+    return settle(next, { type: 'integrate', node: pending.node, kind: 'integrate', nodes: [...order] }, changes);
+  }
 
   if (assessment.result === 'correct') {
     const prompted = skill.told || skill.strikes > 0;
@@ -194,6 +282,11 @@ export function applyAssessment(tutor, assessment, { focus, order = [] } = {}) {
         }
       }
       raiseIfEarned(skill, pending.node, changes);
+    }
+    // socratic-tutor: the course ends with a mixed assessment once every subskill is at target.
+    if (!next.final && allAtTarget(next, order)) {
+      next.final = { done: false, queue: [...order] };
+      return settle(next, { type: 'final', node: order[0], kind: 'final', first: true }, changes);
     }
     const review = pickReview(next, order, focus);
     if (review) {
@@ -346,6 +439,15 @@ export function overallPercent(tutor, nodes) {
   return Math.round(100 * nodes.reduce((sum, n) => sum + levelOf(tutor, n.id), 0) / (MAX_LEVEL * nodes.length));
 }
 
+// The weakest areas for the closing summary: sections with a recorded misconception, then the
+// lowest-level tracked sections. Titles, at most three.
+export function weakestAreas(tutor, tracked) {
+  const title = new Map(tracked.map(n => [n.id, n.title]));
+  const fromMistakes = [...new Set(tutor.misconceptions.map(m => m.node))].filter(id => title.has(id));
+  const byLevel = [...tracked].sort((a, b) => levelOf(tutor, a.id) - levelOf(tutor, b.id)).map(n => n.id);
+  return [...new Set([...fromMistakes, ...byLevel])].slice(0, 3).map(id => title.get(id));
+}
+
 export function levelChangeCopy(change, title) {
   const verb = change.to > change.from ? 'Level up' : 'Level down';
   return `${verb}: ${title} ${change.from} → ${change.to} (${LEVEL_NAMES[change.to]})`;
@@ -400,9 +502,18 @@ const DIFFICULTY_NOTES = {
 };
 
 // What the page tells Claude to do next. One move, stated as an instruction.
-export function moveDirective(move, { title = '', guess = '', question = '' } = {}) {
+export function moveDirective(move, { title = '', guess = '', question = '', titleOf = (id) => id, weak = [] } = {}) {
   const about = `"${title}"`;
   switch (move.type) {
+    case 'final':
+      if (move.first) {
+        return `Grade: CORRECT. Every section is now at the target level. In one sentence, say a short final check follows: one question per section, then one that ties them together. Then ask the first, on ${about}, testing the section's central idea in a way that cannot be answered by recalling a sentence.`;
+      }
+      return `Grade: CORRECT. Confirm in at most one plain sentence. Then ask the next final-check question, on ${about}, testing its central idea.`;
+    case 'integrate':
+      return `Grade: CORRECT. Now ask one integrative question that can only be answered by connecting ideas from at least two of these sections: ${(move.nodes ?? []).map(id => `"${titleOf(id)}"`).join(', ')}.`;
+    case 'complete':
+      return `Grade: CORRECT. The learner has passed the final check. In two or three plain sentences: say so, then name their weakest areas${weak.length ? `, which were: ${weak.join('; ')}` : ' (none were recorded)'}. Do not ask a question.`;
     case 'question':
       if (move.after === 'open') return `The learner asked to be taught ${about}. Ask your first question on it.`;
       if (move.after === 'harder' || move.after === 'easier') {
@@ -444,18 +555,18 @@ export function moveDirective(move, { title = '', guess = '', question = '' } = 
 // thread; then the learner's message with the page's direction and any retrieved excerpts.
 export function tutorTurns(meta, target, history, learnerText, move, {
   catalog = '', excerpts = '', difficulty = 0, answered = null, guess = '', question = '',
-  maxBytes = promptBudget(),
+  diagnostic = '', titleOf = (id) => id, weak = [], maxBytes = promptBudget(),
 } = {}) {
   const side = answered && answered.id !== target.id
     ? `\n\n--- THE SECTION THEIR LAST ANSWER WAS ABOUT ---\n${nodeContext(meta, answered).slice(0, MAX_SIDE_CONTEXT)}\n--- END ---`
     : '';
   const direction = `--- TUTOR DIRECTION (from the page, not the learner) ---\n`
-    + `${moveDirective(move, { title: target.title, guess, question })}\n`
+    + `${moveDirective(move, { title: target.title, guess, question, titleOf, weak })}\n`
     + `Difficulty: ${DIFFICULTY_NOTES[difficulty] ?? DIFFICULTY_NOTES[0]}\n--- END OF DIRECTION ---`;
   return fitTurns(({ history, excerpts, context }) => {
     const lead = {
       role: 'user',
-      content: `${TUTOR_INSTRUCTIONS}\n\n--- THE SECTION ---\n${context}\n--- END OF SECTION ---${side}`
+      content: `${TUTOR_INSTRUCTIONS}${diagnostic ? `\n\n${diagnostic}` : ''}\n\n--- THE SECTION ---\n${context}\n--- END OF SECTION ---${side}`
         + (catalog ? `\n\n--- SOURCES (index, label, url) ---\n${catalog}\n--- END OF SOURCES ---` : ''),
     };
     const tail = [String(learnerText ?? '').slice(0, MAX_ANSWER_CHARS), direction,
@@ -482,6 +593,9 @@ export function gradePrompt(meta, node, question, answer, kind = 'check') {
     'Judge against the section only. Do not use outside knowledge to mark an answer wrong.',
     '',
     `--- SECTION ---\n${nodeContext(meta, node)}\n--- END OF SECTION ---`,
+    kind === 'integrate'
+      ? `The question connects several sections of the explainer. Judge it against this overview as well as the section:\n${meta?.claimSummary ?? ''}`
+      : '',
     '',
     `TUTOR'S MESSAGE (ends with the question):\n${String(question ?? '').slice(-3000)}`,
     '',

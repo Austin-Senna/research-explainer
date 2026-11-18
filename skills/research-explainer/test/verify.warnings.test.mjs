@@ -125,12 +125,12 @@ test('a list whose axis is stated in the plural or as levels does not warn', () 
 
 const words = (n) => Array.from({ length: n }, (_, i) => `word${i}`).join(' ');
 
-test('length follows importance: a prereq over 150 words warns, a core node at the same length does not', () => {
+test('length follows importance: a prereq over 220 visible words warns, a core node at the same length does not', () => {
   const d = doc();
   const prereq = d.nodes.find(n => n.kind === 'prereq');
   const core = d.nodes.find(n => n.kind === 'core');
   for (const n of [prereq, core]) {
-    n.spiral = { intuition: words(80), concrete: words(80), ...(n.kind === 'core' ? { formal: 'x.' } : {}) };
+    n.spiral = { intuition: words(120), concrete: words(120), ...(n.kind === 'core' ? { formal: 'x.' } : {}) };
     delete n.wrongTurn;
   }
   const { warnings } = verify(d, src());
@@ -141,8 +141,8 @@ test('length follows importance: a prereq over 150 words warns, a core node at t
 test('the wrong turn counts toward the budget', () => {
   const d = doc();
   const prereq = d.nodes.find(n => n.kind === 'prereq');
-  prereq.spiral = { intuition: words(60), concrete: words(60) };
-  prereq.wrongTurn = { belief: words(20), correction: words(20) };
+  prereq.spiral = { intuition: words(90), concrete: words(90) };
+  prereq.wrongTurn = { belief: words(20), correction: words(30) };
   assert.ok(verify(d, src()).warnings.some(w => w.code === 'OVER_BUDGET' && w.nodeId === prereq.id));
 });
 
@@ -157,10 +157,56 @@ test('an intuition that opens by naming a bold term warns; naming it after the i
 test('predictions belong on core nodes, and a document with none warns once', () => {
   const d = doc();
   const prereq = d.nodes.find(n => n.kind === 'prereq');
-  prereq.quiz.predict = 'What would you expect?';
+  prereq.quiz = { predict: 'What would you expect?' };
   assert.ok(verify(d, src()).warnings.some(w => w.code === 'PREDICT_ON_SUPPORT' && w.nodeId === prereq.id));
-  for (const n of d.nodes) delete n.quiz.predict;
+  for (const n of d.nodes) delete n.quiz?.predict;
   const none = verify(d, src()).warnings.filter(w => w.code === 'NO_PREDICT');
   assert.equal(none.length, 1);
   assert.equal(none[0].nodeId, null);
+});
+
+test('the collapsed Details block does not count toward the visible budget but has its own cap', () => {
+  const d = doc();
+  const core = d.nodes.find(n => n.kind === 'core');
+  core.spiral = { intuition: words(100), concrete: words(100), formal: words(240) };
+  delete core.wrongTurn;
+  let w = verify(d, src()).warnings;
+  assert.ok(!w.some(x => x.nodeId === core.id && /BUDGET|DETAILS/.test(x.code)));
+  core.spiral.formal = words(260);
+  w = verify(d, src()).warnings;
+  assert.ok(w.some(x => x.code === 'LONG_DETAILS' && x.nodeId === core.id));
+});
+
+test('page questions sit on core nodes, one multiple-choice each', () => {
+  const d = doc();
+  const prereq = d.nodes.find(n => n.kind === 'prereq');
+  const core = d.nodes.find(n => n.kind === 'core');
+  prereq.quiz = { mcq: [structuredClone(core.quiz.mcq[0])] };
+  core.quiz.mcq.push(structuredClone(core.quiz.mcq[0]));
+  const { warnings, errors } = verify(d, src());
+  assert.ok(warnings.some(x => x.code === 'QUIZ_ON_SUPPORT' && x.nodeId === prereq.id));
+  assert.ok(warnings.some(x => x.code === 'TOO_MANY_MCQ' && x.nodeId === core.id));
+  delete core.quiz.mcq;
+  assert.ok(verify(d, src()).errors.some(e => e.code === 'NO_MCQ' && e.nodeId === core.id));
+  assert.ok(!errors.some(e => e.code === 'NO_MCQ' && e.nodeId === prereq.id));
+});
+
+test('narration, em dashes, unnamed sources and all-at-once diagrams each warn', () => {
+  const d = doc();
+  const n = d.nodes[1];
+  n.hook = 'Here I am going to take this at face value.';
+  n.spiral.concrete = 'It scales \u2014 by design. Researchers have shown it helps.';
+  n.diagram = { mermaid: 'flowchart LR\n A-->B', alt: 'x', cueCount: 6 };
+  const codes = new Set(verify(d, src()).warnings.filter(w => w.nodeId === n.id).map(w => w.code));
+  for (const c of ['NARRATION', 'EM_DASH', 'UNNAMED_SOURCE', 'ALL_AT_ONCE']) assert.ok(codes.has(c), c);
+});
+
+test('a named, linked source and a stepped diagram pass', () => {
+  const d = doc();
+  const n = d.nodes[1];
+  n.spiral.concrete = '[Vaswani et al.](https://arxiv.org/abs/1706.03762) found that scaling keeps gradients usable.';
+  n.diagram = { alt: 'x', cueCount: 6, steps: [{ mermaid: 'flowchart LR\n A', alt: 'a' }, { mermaid: 'flowchart LR\n A-->B', alt: 'b' }] };
+  const codes = verify(d, src()).warnings.filter(w => w.nodeId === n.id).map(w => w.code);
+  assert.ok(!codes.includes('UNNAMED_SOURCE'));
+  assert.ok(!codes.includes('ALL_AT_ONCE'));
 });

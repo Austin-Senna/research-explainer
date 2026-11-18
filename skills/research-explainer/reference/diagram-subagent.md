@@ -30,6 +30,10 @@ Hard rules (the page's design contract):
   external references or scripts.
 - Labels on the graphic, next to what they name. Show parts and the steps between them. At most
   about ten emphasised cues.
+- Five or more parts: draw a series, not one picture (authoring rule 9.9). Each step is a full
+  redraw that adds one part, saved as `figures/<id>.step<N>.svg` with a one-line caption saying
+  what was added. Keep every element in the same position from step to step, so only the new part
+  appears to move in.
 - A bar's length is a claim about a number (authoring rule 9.6): proportional within one panel,
   scale stated, and no bar at all where there is no measured value ("to measure" as text instead).
   Conceptual orderings are evenly spaced and labelled "not to scale".

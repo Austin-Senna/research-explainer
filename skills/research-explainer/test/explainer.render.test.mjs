@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { escapeHtml, renderProse, renderSidebar, renderNode, renderQuiz, renderMasthead, renderChat } from '../assets/lib/render.js';
+import { escapeHtml, renderProse, renderSidebar, renderNode, renderQuiz, renderMasthead, renderChat, renderDiagram, stepIndex, renderNodeSources } from '../assets/lib/render.js';
 
 const doc = () => JSON.parse(readFileSync(new URL('./fixtures/attention.nodes.json', import.meta.url)));
 const nodeById = (id) => doc().nodes.find(n => n.id === id);
@@ -87,10 +87,38 @@ test('the masthead front-loads the claim summary', () => {
   assert.match(html, /sequence transduction needs no recurrence/);
 });
 
-test('the masthead carries the honesty note about how learning feels', () => {
+test('the masthead states the claim and does not narrate how learning will feel', () => {
   const html = renderMasthead(doc().meta);
-  assert.match(html, /data-honesty/);
-  assert.match(html, /feel/i);
+  assert.ok(html.includes(doc().meta.claimSummary));
+  assert.doesNotMatch(html, /data-honesty|will feel/i);
+});
+
+test('the formal layer renders collapsed under Details', () => {
+  const n = doc().nodes.find(x => x.spiral?.formal);
+  const html = renderNode(n);
+  assert.match(html, /<details class="layer layer-formal">\s*<summary>Details<\/summary>/);
+  assert.doesNotMatch(html, /<details[^>]*open/);
+});
+
+test('a stepped diagram shows step one, defers the rest, and clamps at both ends', () => {
+  const html = renderDiagram({ alt: 'build-up', steps: [
+    { mermaid: 'flowchart LR\n A-->B', alt: 'a', caption: 'One part' },
+    { mermaid: 'flowchart LR\n A-->B-->C', alt: 'b', caption: 'Add **C**' },
+  ] });
+  assert.match(html, /data-steps="2"/);
+  assert.match(html, /data-step="0">[\s\S]*data-mermaid /);
+  assert.match(html, /data-step="1" hidden>[\s\S]*data-mermaid-deferred/);
+  assert.match(html, /Step 1 of 2/);
+  assert.match(html, /<strong>C<\/strong>/);
+  assert.equal(stepIndex(0, -1, 2), 0);
+  assert.equal(stepIndex(0, 1, 2), 1);
+  assert.equal(stepIndex(1, 1, 2), 1);
+});
+
+test('a single diagram renders as before', () => {
+  const html = renderDiagram({ mermaid: 'flowchart LR\n A-->B', alt: 'x' });
+  assert.match(html, /data-mermaid /);
+  assert.doesNotMatch(html, /step-controls/);
 });
 
 test('the masthead lists the sources it was built from', () => {
@@ -180,4 +208,17 @@ test('a node without a formal layer renders no empty formal block', () => {
   const n = d.nodes.find(x => x.kind === 'prereq');
   delete n.spiral.formal;
   assert.ok(!renderNode(n, d).includes('layer-formal'));
+});
+
+test('prose links to http(s) sources only', () => {
+  const html = renderProse('[AIRS-Bench](https://arxiv.org/abs/2602.06855) found it. [x](javascript:alert(1))');
+  assert.match(html, /<a href="https:\/\/arxiv.org\/abs\/2602.06855">AIRS-Bench<\/a> found it/);
+  assert.doesNotMatch(html, /href="javascript/);
+});
+
+test('each section lists its sources as links under the subtitle', () => {
+  const n = doc().nodes[1];
+  const html = renderNode(n);
+  assert.match(html, /<p class="hook">[\s\S]*<p class="node-sources">From <a href="https?:/);
+  assert.equal(renderNodeSources({ sources: [{ label: 'Notes', url: 'ftp://x' }] }), '<p class="node-sources">From Notes</p>');
 });

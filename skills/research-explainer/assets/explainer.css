@@ -343,3 +343,27 @@ body.chat-open .theme-toggle { right: calc(var(--chat) + 1rem); }
   .node { max-width: none; page-break-after: always; }
   .feedback { display: block !important; }
 }
+
+/* Rule 6.1: the formal layer is opt-in depth, collapsed under "Details". */
+details.layer-formal { border-left: 2px solid var(--border); padding-left: 1rem; }
+details.layer-formal > summary { cursor: pointer; font-family: ui-sans-serif, system-ui, sans-serif;
+  font-size: .85rem; font-weight: 600; color: var(--accent); list-style: none; }
+details.layer-formal > summary::-webkit-details-marker { display: none; }
+details.layer-formal > summary::before { content: "▸ "; }
+details.layer-formal[open] > summary::before { content: "▾ "; }
+details.layer-formal[open] > summary { margin-bottom: .6rem; }
+
+/* Rule 9.9: a diagram built up one step at a time. */
+.diagram-steps .step-caption { margin: .6rem 0 0; font-size: .9rem; color: var(--ink-soft); text-align: center; }
+.step-controls { display: flex; align-items: center; justify-content: center; gap: .75rem; margin-top: .75rem;
+  font-family: ui-sans-serif, system-ui, sans-serif; font-size: .85rem; }
+.step-btn { font: inherit; cursor: pointer; padding: .35rem .8rem; border-radius: 6px;
+  background: var(--surface); color: var(--ink); border: 1px solid var(--border); }
+.step-btn:hover:not([disabled]) { border-color: var(--accent); }
+.step-btn[disabled] { opacity: .4; cursor: default; }
+.step-count { color: var(--ink-soft); min-width: 6.5rem; text-align: center; }
+
+/* Rule 6.21: where a section came from, under its subtitle. */
+.node-sources { margin: -1.4rem 0 2rem; font-family: ui-sans-serif, system-ui, sans-serif;
+  font-size: .8rem; color: var(--ink-soft); }
+.node-sources a, .layer a, .wrong-turn a { color: var(--accent); }

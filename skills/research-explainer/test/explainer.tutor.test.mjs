@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
+  trackedNodes, placement, placeTutor, diagnosticLine, weakestAreas, PLACEMENT_LEVEL,
   tutorVariant, createTutor, skillOf, levelOf, validateAssessment, canRaise, applyAssessment, applyPageSignal,
   pickReview, openMove, tellMove, difficultyMove, parseCommand, pretestQuestion, needsPretest, recordPretest,
   pretestMove, skillRows, overallPercent, levelChangeCopy, saveState, tutorTurns, gradePrompt, moveDirective,
@@ -395,9 +396,71 @@ test('the grading prompt asks for JSON only, is strict, and tightens for a defen
 test('the sidebar shows levels only when the tutor is in use', () => {
   const plain = renderSidebar(doc().nodes, { currentId: A });
   assert.ok(!plain.includes('class="lvl"'));
-  const html = renderSidebar(doc().nodes, { currentId: A, levels: new Map([[A, 3]]) });
+  const html = renderSidebar(doc().nodes, { currentId: A, levels: new Map([[A, 3], [B, 0]]) });
   assert.match(html, /data-lvl="3"[^>]*aria-label="Level 3 of 5: can do with help"/);
   assert.match(html, /data-lvl="0"/);
+  assert.equal(html.match(/data-lvl=/g).length, 2, 'untracked sections carry no meter');
+});
+
+test('the skill map tracks core nodes only, and falls back to every node without any', () => {
+  const nodes = doc().nodes;
+  assert.deepEqual(trackedNodes(nodes).map(n => n.kind), nodes.filter(n => n.kind === 'core').map(() => 'core'));
+  const legacy = nodes.map(n => ({ ...n, kind: 'prereq' }));
+  assert.equal(trackedNodes(legacy).length, nodes.length);
+});
+
+test('the diagnostic places a known core concept at level 2, once, and never lowers a level', () => {
+  const d = doc();
+  d.concepts = { ...d.concepts, attention: { introducedBy: A }, dots: { introducedBy: 'prereq-dot-product' } };
+  d.diagnostic = { results: [{ concept: 'attention', known: true }, { concept: 'dots', known: true }, { concept: 'x', known: false }] };
+  assert.deepEqual(placement(d), { [A]: PLACEMENT_LEVEL }, 'prereqs are not placed: they are not tracked');
+  const placed = placeTutor(createTutor(), placement(d));
+  assert.equal(levelOf(placed, A), 2);
+  assert.equal(placed.placed, true);
+  const earned = createTutor({ skills: { [A]: { level: 4 } } });
+  assert.equal(levelOf(placeTutor(earned, placement(d)), A), 4);
+  const again = placeTutor({ ...placed, skills: { [A]: { level: 0 } } }, placement(d));
+  assert.equal(levelOf(again, A), 0, 'placement happens once');
+  assert.match(diagnosticLine(d), /knows attention, dots; did not know x/);
+});
+
+test('with every tracked node at target, a right answer starts the final assessment', () => {
+  const order = [A, B];
+  const t = createTutor({ skills: { [A]: { level: 4, covered: true }, [B]: { level: 4, covered: true } } });
+  const step = run(t, A, [right], { order });
+  assert.equal(step.move.type, 'final');
+  assert.equal(step.move.first, true);
+  assert.deepEqual(step.tutor.pending, { node: A, kind: 'final' });
+  const second = applyAssessment(step.tutor, right, { focus: A, order });
+  assert.deepEqual(second.move, { type: 'final', node: B, kind: 'final' });
+  const integrate = applyAssessment(second.tutor, right, { focus: A, order });
+  assert.equal(integrate.move.type, 'integrate');
+  assert.deepEqual(integrate.move.nodes, order);
+  const done = applyAssessment(integrate.tutor, right, { focus: A, order });
+  assert.equal(done.move.type, 'complete');
+  assert.equal(done.tutor.pending, null);
+  assert.equal(done.tutor.final.done, true);
+  const after = run(done.tutor, A, [right], { order });
+  assert.notEqual(after.move.type, 'final', 'a passed final does not start again');
+});
+
+test('a miss in the final assessment lowers that level and returns to the loop', () => {
+  const order = [A, B];
+  const t = createTutor({ skills: { [A]: { level: 4, covered: true }, [B]: { level: 4, covered: true } } });
+  const started = run(t, A, [right], { order });
+  const missed = applyAssessment(started.tutor, wrong, { focus: A, order });
+  assert.deepEqual(missed.changes, [{ node: A, from: 4, to: 3 }]);
+  assert.equal(missed.tutor.final, null);
+  assert.equal(missed.move.type, 'narrow');
+});
+
+test('the closing summary names misconceptions first, then the lowest levels', () => {
+  const nodes = doc().nodes.filter(n => n.kind === 'core');
+  const t = createTutor({ skills: { [A]: { level: 5 }, [B]: { level: 4 } }, misconceptions: [{ node: A, text: 'x' }] });
+  const weak = weakestAreas(t, nodes);
+  assert.equal(weak[0], nodes.find(n => n.id === A).title);
+  assert.match(moveDirective({ type: 'complete' }, { weak }), /weakest areas, which were/);
+  assert.match(moveDirective({ type: 'integrate', nodes: [A, B] }, { titleOf: (id) => `T-${id}` }), /"T-scaled-dot-product", "T-multi-head"/);
 });
 
 test('the panel carries both modes only when the tutor is built in', () => {

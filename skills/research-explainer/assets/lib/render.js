@@ -12,6 +12,9 @@ export function escapeHtml(text) {
 // A deliberately tiny markdown subset. Anything else is escaped and shown as written.
 function inline(escaped) {
   return escaped
+    // [text](https://…): a named source at the claim it supports (rule 6.21). Only http(s) URLs
+    // become links; anything else stays literal text.
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2">$1</a>')
     .replace(/`([^`]+)`/g, '<code>$1</code>')
     .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
     .replace(/(^|[^*])\*([^*]+)\*/g, '$1<em>$2</em>');
@@ -109,7 +112,7 @@ export function renderSidebar(nodes, { currentId, passed = new Set(), levels = n
     const kids = children.length ? `<ul class="tree-children">${children.map(item).join('')}</ul>` : '';
     const mark = node.kind === 'prereq' ? '<span class="mark" aria-label="added for you">⚡</span>' : '';
     const tick = passed.has(node.id) ? '<span class="tick" aria-label="passed">✓</span>' : '';
-    const level = levels ? renderLevel(levels.get(node.id) ?? 0) : '';
+    const level = levels?.has(node.id) ? renderLevel(levels.get(node.id)) : '';
     return `<li><a href="#${escapeHtml(node.id)}" data-id="${escapeHtml(node.id)}" class="${classes.join(' ')}"${current}>${tick}${mark}<span class="label">${escapeHtml(node.title)}</span>${level}</a>${kids}</li>`;
   };
   return `<ul class="tree-root">${buildTree(nodes).map(item).join('')}</ul>`;
@@ -146,8 +149,8 @@ export function renderQuiz(node) {
   return parts.length ? `<div class="quiz"><h3>Check yourself</h3>${parts.join('')}</div>` : '';
 }
 
-// Spec §6.7: front-load the claim. Spec §10: the only intervention with evidence against the
-// fluency illusion is telling readers in advance that the better version feels worse.
+// Spec §6.7: front-load the claim. (The §10 note warning that the questions feel slower was
+// dropped: the page no longer narrates the reader's experience; authoring rules §6.16.)
 export function renderMasthead(meta) {
   const sources = (meta.sources ?? []).map(s =>
     `<li><a href="${escapeHtml(s.url)}">${escapeHtml(s.label)}</a></li>`).join('');
@@ -155,9 +158,6 @@ export function renderMasthead(meta) {
     <header class="masthead">
       <h1>${escapeHtml(meta.title ?? '')}</h1>
       <p class="claim">${escapeHtml(meta.claimSummary ?? '')}</p>
-      <p class="honesty" data-honesty>Working the questions will feel slower and less pleasant
-        than reading an answer. That feeling is not a signal that it is going worse — people
-        consistently rate the version that teaches them more as the one they learned less from.</p>
       <ul class="sources">${sources}</ul>
     </header>`;
 }
@@ -227,6 +227,60 @@ export function renderSaveState(text) {
 
 // `pretest` (a question) replaces the body with the prediction card; `prediction` and `offer` add
 // the tutor's inline pieces. With none of them the node renders exactly as it always has.
+// One drawing: Mermaid source (drawn in the page by explainer.js) or hand-drawn inline SVG.
+function renderDrawing(d, { deferred = false } = {}) {
+  if (d.mermaid) {
+    // A hidden step is not handed to Mermaid until it is shown: Mermaid lays out a hidden element
+    // at zero size.
+    return `<pre class="mermaid" ${deferred ? 'data-mermaid-deferred' : 'data-mermaid'} data-alt="${escapeHtml(d.alt)}">${escapeHtml(d.mermaid)}</pre>`;
+  }
+  return d.svg ?? '';
+}
+
+// A diagram is one drawing, or (rule 9.9) a short series of steps where each redraws the last
+// and adds one part, so the reader watches the system assemble instead of meeting it whole.
+// Steps show one at a time behind Back / Next; every step stays in the DOM for print and search.
+// Clamp a step move to the series. Pure, so the stepper's edges are testable.
+export function stepIndex(current, delta, total) {
+  return Math.min(Math.max(0, current + delta), Math.max(0, total - 1));
+}
+
+export function renderDiagram(diagram) {
+  if (!diagram) return '';
+  const steps = Array.isArray(diagram.steps) && diagram.steps.length ? diagram.steps : null;
+  if (!steps) {
+    return `
+    <figure class="diagram${diagram.mermaid ? ' diagram-mermaid' : ''}">${renderDrawing(diagram)}
+      <figcaption class="sr-only">${escapeHtml(diagram.alt)}</figcaption>
+    </figure>`;
+  }
+  const panels = steps.map((st, i) => `
+      <div class="diagram-step${st.mermaid ? ' diagram-mermaid' : ''}" data-step="${i}"${i ? ' hidden' : ''}>
+        ${renderDrawing(st, { deferred: i > 0 })}
+        <p class="step-caption">${inline(escapeHtml(st.caption ?? ''))}</p>
+        <span class="sr-only">${escapeHtml(st.alt ?? '')}</span>
+      </div>`).join('');
+  return `
+    <figure class="diagram diagram-steps" data-steps="${steps.length}">
+      ${panels}
+      <div class="step-controls">
+        <button type="button" class="step-btn" data-step-go="-1" disabled>Back</button>
+        <span class="step-count" aria-live="polite">Step 1 of ${steps.length}</span>
+        <button type="button" class="step-btn" data-step-go="1">Next</button>
+      </div>
+      <figcaption class="sr-only">${escapeHtml(diagram.alt ?? '')}</figcaption>
+    </figure>`;
+}
+
+// Rule 6.21: every section says where it came from, under its subtitle, as links.
+export function renderNodeSources(node) {
+  const items = (node.sources ?? []).filter(s => s?.label).map(s => {
+    const text = `${escapeHtml(s.label)}${s.locator ? `, ${escapeHtml(s.locator)}` : ''}`;
+    return /^https?:\/\//.test(s.url ?? '') ? `<a href="${escapeHtml(s.url)}">${text}</a>` : text;
+  });
+  return items.length ? `<p class="node-sources">From ${items.join(' · ')}</p>` : '';
+}
+
 export function renderNode(node, { reaskOf = null, pretest = null, prediction = null, offer = false } = {}) {
   const reask = reaskOf ? `
     <aside class="reask" data-reask="${escapeHtml(reaskOf.id)}">
@@ -237,13 +291,7 @@ export function renderNode(node, { reaskOf = null, pretest = null, prediction = 
   // A diagram is either hand-drawn inline SVG or Mermaid source. Mermaid ships as text and is drawn
   // in the page (explainer.js), because process diagrams are where most explainers need a picture
   // and Mermaid states them in a few lines.
-  const diagram = node.diagram ? `
-    <figure class="diagram${node.diagram.mermaid ? ' diagram-mermaid' : ''}">${
-      node.diagram.mermaid
-        ? `<pre class="mermaid" data-mermaid data-alt="${escapeHtml(node.diagram.alt)}">${escapeHtml(node.diagram.mermaid)}</pre>`
-        : node.diagram.svg}
-      <figcaption class="sr-only">${escapeHtml(node.diagram.alt)}</figcaption>
-    </figure>` : '';
+  const diagram = renderDiagram(node.diagram);
 
   // Figures taken from a source paper, or drawn for this node. The build inlines each src as a data
   // URI, so the page stays one self-contained file. The credit line is not optional: these are
@@ -267,6 +315,7 @@ export function renderNode(node, { reaskOf = null, pretest = null, prediction = 
       <header>
         <h2>${escapeHtml(node.title)}</h2>
         <p class="hook">${escapeHtml(node.hook)}</p>
+        ${renderNodeSources(node)}
       </header>
       ${renderPretest(pretest)}
     </article>`;
@@ -277,6 +326,7 @@ export function renderNode(node, { reaskOf = null, pretest = null, prediction = 
       <header>
         <h2>${escapeHtml(node.title)}</h2>
         <p class="hook">${escapeHtml(node.hook)}</p>
+        ${renderNodeSources(node)}
       </header>
       ${renderPrediction(prediction)}
       ${reask}
@@ -284,7 +334,11 @@ export function renderNode(node, { reaskOf = null, pretest = null, prediction = 
       ${diagram}
       ${figures}
       <div class="layer layer-concrete">${renderProse(node.spiral?.concrete)}</div>
-      ${node.spiral?.formal ? `<div class="layer layer-formal">${renderProse(node.spiral.formal)}</div>` : ''}
+      ${node.spiral?.formal ? `
+      <details class="layer layer-formal">
+        <summary>Details</summary>
+        ${renderProse(node.spiral.formal)}
+      </details>` : ''}
       ${wrongTurn}
       ${renderQuiz(node)}
       ${offer ? renderTutorOffer() : ''}

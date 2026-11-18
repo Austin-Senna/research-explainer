@@ -27,7 +27,11 @@ first two, the novice reads all three, nobody classifies themselves. Across Dist
 Nicky Case, Bret Victor, 3Blue1Brown, Google PAIR, Seeing Theory, Setosa, Ciechanowski, Lilian
 Weng and Quanta, **not one offers a difficulty toggle.**
 
-All three layers ship to every reader **of a core node**. A `prereq` or `extension` node is
+All three layers ship to every reader **of a core node**, but not all on screen: the intuition
+and the concrete instance are the body, and the formal layer renders collapsed under **Details**,
+opened by the reader who wants it (`teach`'s "smallest complete account first, add layers when
+asked"). A reader who wants more than Details asks the chat or the tutor; the page does not try
+to pre-answer every follow-up. A `prereq` or `extension` node is
 support, not the paper: it gets the intuition and one concrete instance, and a formal layer only
 when the core nodes lean on its notation. What the diagnostic removes is never a whole layer of a
 core node. It is specific *elements* inside one, most often the analogy in the intuition layer.
@@ -136,10 +140,14 @@ correct that specific distortion. Novices map surface features, so make the stru
 explicit. **Delete analogies for readers the diagnostic places above the material** — for them
 an analogy "adds unnecessary information."
 
-### 6.12 Declare oversimplifications, correct them later **[C]**
-*"For the next three sections I'm going to pretend there's one attention head and no positional
-information. Both are wrong and I'll fix them in §5 and §6."* Record it in
-`meta.oversimplifications`; the verifier checks each one is actually corrected.
+### 6.12 Declare oversimplifications in the data, correct them plainly **[C] + [U]**
+Simplifying first and correcting later is still right. Record each one in
+`meta.oversimplifications`; the verifier checks it is actually corrected. What changed is the
+voice: state the simplification as a fact about the subject ("these numbers are as reported,
+before any contamination audit"), never as the author narrating a plan ("I am going to take every
+number at face value, which is wrong, and I will fix it"). The correcting section states the
+correction; it does not recall the earlier pretence. A real reader found the narrated version
+odd, and `NARRATION` warns on it.
 
 ### 6.13 Every node carries its assumptions and one wrong turn **[B]**
 Experts mispredict novice difficulty badly — tappers predicted 50% recognition, listeners got
@@ -197,6 +205,15 @@ gave up.
 *The tell that you got this wrong:* the reader asks whether X is an improved version of Y, when X
 and Y are actually siblings that both modify Z.
 
+### 6.21 Name the source at the claim **[U]**
+A claim from someone else names them, with a link, in the sentence that makes it:
+"[PostTrainBench](https://arxiv.org/abs/2603.08640) found agents editing their own evaluation in
+23 runs", never "one of these papers found" or "researchers have shown". The reader should never
+have to guess whose result a number is. Write links as `[title](url)`; the page renders them.
+Every node also lists its `sources` under its subtitle, with locators, so the section's origin is
+visible before the body. The verifier warns `UNNAMED_SOURCE` on an attribution with no link.
+*Observed failure:* a reader could not tell who "the researchers" were.
+
 ### 6.16 Banned outright
 
 - **Fun asides, fun facts, decorative imagery.** g = −0.16 to −0.33, worst when persistent on
@@ -217,6 +234,14 @@ and Y are actually siblings that both modify Z.
   rate. Identical, at the cost of extra exposure to lures. **[A]**
 - **Score-based progress gating.** See §7.5.
 - **Concept-map navigation.** In hypertext, g = 0.017 against a plain outline. **[B]**
+- **Narrating the page or the reader's feelings.** No "I am going to", no "this will feel
+  slower", no framing labels ("the key insight", "here is where it gets interesting", "this is the
+  tricky part", "at its core"), no announcing that a part is hard or important. Just say it.
+  The verifier warns `NARRATION`. (The masthead's old note that the questions "feel slower" had
+  evidence behind it, spec §10; it was dropped once the effortful part moved into the opt-in
+  tutor.) **[U]**
+- **Em dashes.** Use a period, a colon or a comma. Prefer periods: one or two commas a sentence,
+  and split a sentence whose clauses pile up. The verifier warns `EM_DASH`. **[U]**
 
 ---
 
@@ -274,7 +299,11 @@ Confidence routing (wrong + sure gets a re-ask, wrong + unsure does not) was rem
 was contested on conceptual material, where one study got the reverse, and a reader asked for the extra
 "How sure are you?" step on every question to go.
 
-### 7.7 One retrieval opportunity per conceptual segment **[D]**
+### 7.7 One retrieval opportunity per conceptual segment **[D] + [U]**
+A segment is a core node. Each gets **one** multiple-choice question and, optionally, a
+self-explanation; prerequisites and extensions get none (`QUIZ_ON_SUPPORT`, `TOO_MANY_MCQ`). The
+tutor is where retrieval goes deeper: `socratic-tutor` counts recall, not recognition, and a
+page that already asks 50 questions duplicates it. A real reader found the quiz load heavy.
 Dosage is contested three ways; don't assert a number. What is solid: testing at segment
 boundaries improved integration (d = 0.70) with *lower* reported anxiety. **This document is a
 single session, so calibrate down** — Quantum Country's one-month follow-through is 29%.
@@ -380,3 +409,11 @@ own figure first, Mermaid for processes, a drawn SVG for quantities and structur
 pure vocabulary may go without; the verifier warns (`NO_VISUAL`) rather than fails.
 
 *Observed failure:* a reader called nodes without pictures "hard to understand or lacking images".
+
+### 9.9 Build a picture up one part at a time **[B] + [U]**
+A diagram with five or more parts (`cueCount` ≥ 5) is a short series, not one drawing:
+`diagram.steps`, each step a full redraw that adds one part, with a one-line caption saying what
+was added. The reader steps through with Back / Next. To teach a flow from A to B to C, draw it
+three times: A to B, then add C, then add the return edge. One all-at-once diagram, especially
+one saved for the end, is a reference, not teaching. The verifier warns `ALL_AT_ONCE`. Every step
+needs its own `svg` or `mermaid` and `alt`.
