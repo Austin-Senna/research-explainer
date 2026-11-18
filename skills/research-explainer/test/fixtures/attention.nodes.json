@@ -117,8 +117,7 @@
           }
         ],
         "selfExplain": "Conceptualize in one sentence why alignment and distance are different questions.",
-        "selfExplainAnswer": "The dot product measures how much two vectors point the same way, so it is large when they align and zero when they are perpendicular.",
-        "predict": "If you multiply two vectors element by element and add up the results, what would you expect that single number to say about how the vectors relate?"
+        "selfExplainAnswer": "The dot product measures how much two vectors point the same way, so it is large when they align and zero when they are perpendicular."
       },
       "sources": [
         {
@@ -351,8 +350,7 @@
           }
         ],
         "selfExplain": "Conceptualize in one sentence what a transformer would confuse without positional encoding.",
-        "selfExplainAnswer": "Attention itself ignores order, so position has to be added to the inputs or every permutation of the sentence would look identical.",
-        "predict": "If attention only compares word contents, what happens to the meaning of \"dog bites man\" versus \"man bites dog\"?"
+        "selfExplainAnswer": "Attention itself ignores order, so position has to be added to the inputs or every permutation of the sentence would look identical."
       },
       "sources": [
         {

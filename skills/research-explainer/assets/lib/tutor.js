@@ -301,21 +301,14 @@ export function applyPageSignal(tutor, nodeId, signal) {
 
 // The prediction question is authored (quiz.predict): one the reader can reason about from the
 // page's overview and the section's hook alone, aimed at the section's central claim, since the
-// pretesting effect lands on the item pretested. It is on screen at once, with nothing sampled on
-// load. Older documents without one fall back to the first MCQ stem that reads without its
-// options, which is often recall rather than prediction.
+// pretesting effect lands on the item pretested. Only the few sections worth predicting carry
+// one; every other section opens straight into its body. Nothing is sampled on load.
 export function pretestQuestion(node) {
-  const predict = String(node?.quiz?.predict ?? '').trim();
-  if (predict) return predict;
-  const needsOptions = /\b(which of|following|these (options|statements)|select|choose)\b/i;
-  const stem = (node?.quiz?.mcq ?? []).map(m => String(m?.stem ?? '').trim()).find(s => s && !needsOptions.test(s));
-  if (stem) return stem;
-  if (node?.quiz?.selfExplain) return String(node.quiz.selfExplain).replace(/^conceptualize in one sentence\s*/i, '').replace(/^./, c => c.toUpperCase());
-  return `${node?.hook ?? ''} What do you expect the answer to be?`.trim();
+  return String(node?.quiz?.predict ?? '').trim() || null;
 }
 
-export function needsPretest(tutor, nodeId) {
-  return !tutor?.pretestOff && !tutor?.pretests?.[nodeId];
+export function needsPretest(tutor, node) {
+  return !tutor?.pretestOff && Boolean(pretestQuestion(node)) && !tutor?.pretests?.[node?.id];
 }
 
 // A pretest guess is never evidence: this touches no evidence list and no level. What it does

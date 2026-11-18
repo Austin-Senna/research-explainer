@@ -161,7 +161,7 @@ function start(doc) {
     const reaskOf = reaskId && reaskId !== currentId ? byId.get(reaskId) : null;
 
     // Tutor-first: the section opens on one prediction question in place of its body.
-    const gated = tutorOn() && variant === 'first' && !noGate && needsPretest(state.tutor, node.id);
+    const gated = tutorOn() && variant === 'first' && !noGate && needsPretest(state.tutor, node);
     const question = gated ? pretestQuestion(node) : null;
 
     // The tree is always fully expanded: spec §10 prefers adjacent depth to hidden depth,

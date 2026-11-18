@@ -280,21 +280,22 @@ test('a pretest guess is never evidence and never moves a level', () => {
 
 test('a pretest is asked once per section, skipping counts as done, and it can be turned off', () => {
   const t = createTutor();
-  assert.equal(needsPretest(t, A), true);
+  const nodeA = doc().nodes.find(n => n.id === A);
+  const nodeB = doc().nodes.find(n => n.id === B);
+  assert.equal(needsPretest(t, nodeA), true);
   const skipped = recordPretest(t, A, { guess: '   ' });
   assert.deepEqual(skipped.pretests[A], { skipped: true });
-  assert.equal(needsPretest(skipped, A), false);
-  assert.equal(needsPretest(skipped, B), true);
-  assert.equal(needsPretest({ ...t, pretestOff: true }, B), false);
+  assert.equal(needsPretest(skipped, nodeA), false);
+  assert.equal(needsPretest(skipped, nodeB), true);
+  assert.equal(needsPretest({ ...t, pretestOff: true }, nodeB), false);
 });
 
-test('without quiz.predict, the pretest falls back to a stem that reads without its options', () => {
+test('a section without quiz.predict opens straight into its body', () => {
   const found = doc().nodes.find(x => x.id === A);
-  const n = { ...found, quiz: { ...found.quiz, predict: undefined } };
-  assert.equal(pretestQuestion(n), n.quiz.mcq[0].stem);
-  const needs = { ...n, quiz: { mcq: [{ stem: 'Which of the following is true?' }], selfExplain: 'Conceptualize in one sentence why scaling helps.' } };
-  assert.equal(pretestQuestion(needs), 'Why scaling helps.');
-  assert.match(pretestQuestion({ hook: 'Why order matters.', quiz: {} }), /Why order matters\. What do you expect/);
+  const plain = { ...found, quiz: { ...found.quiz, predict: undefined } };
+  assert.equal(pretestQuestion(plain), null);
+  assert.equal(needsPretest(createTutor(), plain), false);
+  assert.equal(pretestQuestion({ quiz: { predict: '   ' } }), null);
 });
 
 test('the skill map lists every section in reading order with depth, level and focus', () => {
@@ -463,9 +464,7 @@ test('an answer shown by the page quiz makes the next tutor answer prompted', ()
   assert.equal(skillOf(explained, A).told, true);
 });
 
-test('the opening prediction is the authored quiz.predict when there is one', () => {
+test('the opening prediction is the authored quiz.predict', () => {
   const n = doc().nodes[1];
   assert.equal(pretestQuestion(n), n.quiz.predict);
-  const legacy = { ...n, quiz: { ...n.quiz, predict: undefined } };
-  assert.equal(pretestQuestion(legacy), legacy.quiz.mcq[0].stem, 'older documents fall back to a stem');
 });

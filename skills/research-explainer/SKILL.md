@@ -184,6 +184,11 @@ confusable pairs apart in a sentence of their own**; and **when B modifies A, de
 rather than listing them side by side**. Every place a real reader got stuck traced back to one
 of those three.
 
+Two more come from the same source, a reader who found the pages too long and too dense: **length
+follows importance** (prereq 150 words, extension 200, core 350; §6.8), and **the idea comes before
+its name** (§6.5). Write each node in plain spoken English, as one engineer explains to another: the
+smallest complete account first, then stop.
+
 ### 6b. Visuals (images `full` or `figures`)
 Treat the explainer like a blog post: a picture beside every idea that has a shape. For each node,
 in this order of preference:
@@ -227,12 +232,12 @@ node <base>/assets/build.mjs <nodes.json> <outDir> --tutor panel
 node <base>/assets/build.mjs <nodes.json> <outDir> --tutor off
 ```
 
-- `first` (default): each section opens with its `quiz.predict` question in place of its body. The
-  reader answers or skips, the body appears, and the tutor follows up on the prediction. The chat
-  panel also has Tutor beside Ask. Write `predict` so the reader can reason to a guess from the
-  page's overview (`meta.claimSummary`) and the node's hook alone, aimed at the node's central
-  claim (authoring rules §7.10). Without it the page falls back to the first MCQ stem that reads
-  without its options, and the verifier warns `NO_PREDICT`.
+- `first` (default): a section that carries `quiz.predict` opens with that question in place of
+  its body; the reader answers or skips, the body appears, and the tutor follows up on the
+  prediction. Sections without one open straight into their body. The chat panel also has Tutor
+  beside Ask. Give `predict` only to the core nodes carrying the paper's mechanism or main
+  result, written so the reader can reason to a guess from the overview (`meta.claimSummary`)
+  and the node's hook alone (authoring rules §7.10).
 - `panel`: the page reads as before. The chat panel gains a second mode, Tutor, beside Ask, and
   each section ends with an offer to be quizzed on it.
 - `off`: no tutor.
@@ -291,15 +296,16 @@ branches. Breadth is cheap; depth is expensive. 10–20 items per level is fine 
     "order": 7,
     "hook": "one sentence: why this node exists at all",
     "assumes": ["<concept-id>"],
-    "spiral": { "intuition": "…", "concrete": "…", "formal": "…" },
-    "wrongTurn": { "belief": "If you're thinking X here…", "correction": "…why that's wrong" },
+    "spiral": { "intuition": "…", "concrete": "…", "formal": "…" },  // formal: core nodes only
+    "wrongTurn": { "belief": "If you're thinking X here…", "correction": "…why that's wrong" },  // core; optional elsewhere
+    // explanation budget (spiral + wrongTurn): prereq 150 words, extension 200, core 350 (§6.8)
     "diagram": { "svg" | "mermaid", "alt", "cueCount": 7, "kind": "onion|dataflow|comparison|result" },
     "figures": [{ "src": "figures/x.png", "alt", "caption", "credit", "url" }],  // inlined by the build
     "quiz": {
       "mcq":   [{ "stem", "options": [{ "text", "correct", "why" }], "explanation" }],  // 1-3 per node, multiple choice only
       "selfExplain": "Conceptualize in one sentence why …",
       "selfExplainAnswer": "the author's one-sentence model answer",  // required: Claude grades against it, and it is shown as feedback
-      "predict": "one question the reader can reason about from the overview and this node's hook alone?"  // opens the node in the default tutor; see authoring rules §7.10
+      "predict": "one question the reader can reason about from the overview and this node's hook alone?"  // optional, core nodes only, few of them; opens the node in the default tutor (§7.10)
     },
     "sources": [{ "label", "url", "locator": "§3.2.1" }]
   }]

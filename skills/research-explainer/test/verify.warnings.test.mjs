@@ -122,3 +122,45 @@ test('a list whose axis is stated in the plural or as levels does not warn', () 
   assert.ok(!warnings.some(w => w.code === 'TAXONOMY_WITHOUT_AXIS'),
     'naming the dimension in the plural still names the dimension');
 });
+
+const words = (n) => Array.from({ length: n }, (_, i) => `word${i}`).join(' ');
+
+test('length follows importance: a prereq over 150 words warns, a core node at the same length does not', () => {
+  const d = doc();
+  const prereq = d.nodes.find(n => n.kind === 'prereq');
+  const core = d.nodes.find(n => n.kind === 'core');
+  for (const n of [prereq, core]) {
+    n.spiral = { intuition: words(80), concrete: words(80), ...(n.kind === 'core' ? { formal: 'x.' } : {}) };
+    delete n.wrongTurn;
+  }
+  const { warnings } = verify(d, src());
+  assert.ok(warnings.some(w => w.code === 'OVER_BUDGET' && w.nodeId === prereq.id));
+  assert.ok(!warnings.some(w => w.code === 'OVER_BUDGET' && w.nodeId === core.id));
+});
+
+test('the wrong turn counts toward the budget', () => {
+  const d = doc();
+  const prereq = d.nodes.find(n => n.kind === 'prereq');
+  prereq.spiral = { intuition: words(60), concrete: words(60) };
+  prereq.wrongTurn = { belief: words(20), correction: words(20) };
+  assert.ok(verify(d, src()).warnings.some(w => w.code === 'OVER_BUDGET' && w.nodeId === prereq.id));
+});
+
+test('an intuition that opens by naming a bold term warns; naming it after the idea does not', () => {
+  const d = doc();
+  d.nodes[1].spiral.intuition = 'The **softmax** turns scores into weights. More text follows.';
+  assert.ok(verify(d, src()).warnings.some(w => w.code === 'NAME_FIRST' && w.nodeId === d.nodes[1].id));
+  d.nodes[1].spiral.intuition = 'Turn scores into weights that sum to one. That step is the **softmax**.';
+  assert.ok(!verify(d, src()).warnings.some(w => w.code === 'NAME_FIRST'));
+});
+
+test('predictions belong on core nodes, and a document with none warns once', () => {
+  const d = doc();
+  const prereq = d.nodes.find(n => n.kind === 'prereq');
+  prereq.quiz.predict = 'What would you expect?';
+  assert.ok(verify(d, src()).warnings.some(w => w.code === 'PREDICT_ON_SUPPORT' && w.nodeId === prereq.id));
+  for (const n of d.nodes) delete n.quiz.predict;
+  const none = verify(d, src()).warnings.filter(w => w.code === 'NO_PREDICT');
+  assert.equal(none.length, 1);
+  assert.equal(none[0].nodeId, null);
+});

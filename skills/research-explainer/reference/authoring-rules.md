@@ -27,8 +27,10 @@ first two, the novice reads all three, nobody classifies themselves. Across Dist
 Nicky Case, Bret Victor, 3Blue1Brown, Google PAIR, Seeing Theory, Setosa, Ciechanowski, Lilian
 Weng and Quanta, **not one offers a difficulty toggle.**
 
-All three layers ship to every reader. What the diagnostic removes is never a whole layer — it
-is specific *elements* inside one, most often the analogy in the intuition layer.
+All three layers ship to every reader **of a core node**. A `prereq` or `extension` node is
+support, not the paper: it gets the intuition and one concrete instance, and a formal layer only
+when the core nodes lean on its notation. What the diagnostic removes is never a whole layer of a
+core node. It is specific *elements* inside one, most often the analogy in the intuition layer.
 
 ### 6.2 Where content differs by expertise, it is these swaps — not "more detail" **[B]**
 Expert values are *negative*: active harm, not indifference.
@@ -62,10 +64,20 @@ more time-efficient than forward for equal transfer.
 > **[D]** Only *adaptive* fading beat plain problem-solving in the two Salden studies; fixed
 > fading did not. Expect less here than the headline suggests.
 
-### 6.5 Pre-train vocabulary before mechanism **[B]**
-Node 0 is terms only, one sentence each, no mechanism. Collapse it when the diagnostic says the
-reader has them — that is precisely the redundant guidance §6.2 says to delete. The payoff is on
-transfer, not recall.
+### 6.5 The idea first, then its name **[B] + [U]**
+Explain what a thing does in plain words, then name it: "compare each attempt with how the group
+did on average, and keep the margin. That margin is called the **advantage**." Never the
+reverse ("The **advantage** is..."): a term met before its idea is one more thing to hold while
+the reader waits for it to mean something. The verifier warns `NAME_FIRST` when an intuition
+opens on a bold term.
+
+The pre-training evidence (knowing the names and parts before the mechanism helps transfer) is
+still honoured, inside the node instead of in front of it: each part is named the moment it has
+been explained, before the mechanism uses it. There is no terms-only node 0. A real reader found
+one dense with jargon and skipped it.
+
+Name only what the rest of the page uses again. A term used once does not need a name; say what
+it means and move on. Give each concept one name and keep it.
 
 ### 6.6 Lead with motivation, never a definition **[C]**
 Universal across every exemplar; none does the opposite. *"Topic definitions should not be seen
@@ -81,7 +93,19 @@ the largest and most consistent effect in the corpus. On suspense vs. front-load
 direct experiment found chronological structure consumed *more* cognitive resources and scored
 *lower* on comprehension. **There is no experimental support for suspense.**
 
-### 6.8 Short units **[C]**
+### 6.8 Short units, and length follows importance **[C] + [U]**
+Budgets per node, counting the spiral and the wrong turn (the verifier warns `OVER_BUDGET`):
+**prereq 150 words, extension 200, core 350.** A real reader found every section the same
+length and the background as long as the paper's own claims; measured, prereqs averaged 335
+words against 313 for core. Support should be skimmable in under a minute. Spend the words where
+the paper is. If a prereq needs more than 150 words, it is either two prereqs or the reader
+should be sent to a resource at the Phase 4 gate.
+
+Write in the plain spoken register of a senior engineer explaining to a colleague: the smallest
+complete account first, then stop. No framing labels ("the key insight", "the one idea to hold
+onto", "here is where it gets interesting"), no announcing that something is hard or important,
+no preview of what is coming. Periods over commas; one or two commas a sentence.
+
 No unbroken block over ~250 words. Alammar's median section is ~210 words with an image every
 ~95; *Evolution of Trust* runs ~103 words per slide in ~15-word blocks; Google PAIR uses ~80-word
 scroll steps. **Nobody in this set writes a 600-word unbroken block.** Segment on conceptual
@@ -121,7 +145,9 @@ information. Both are wrong and I'll fix them in §5 and §6."* Record it in
 Experts mispredict novice difficulty badly — tappers predicted 50% recognition, listeners got
 2.5%; **intermediates predict better than experts**; debiasing only partially corrects it. More
 domain education made teachers' predictions *worse*. So don't rely on your own judgment about
-difficulty: emit `assumes` and `wrongTurn` on every node and let the verifier check them.
+difficulty: emit `assumes` on every node and let the verifier check it. Emit `wrongTurn` on every
+core node; on a prereq or extension only when there is a misconception worth its share of the
+150 or 200 words.
 
 ### 6.14 The and/but/therefore test **[C]**
 If adjacent nodes connect with "and then… and then…", the spine is a list, not an explanation.
@@ -265,8 +291,13 @@ post-class 0.536. And narrow: **specific effect g = 0.54 on prequestioned conten
 g = 0.04 on everything else.** They don't help you learn the document; they help you learn the
 three facts you asked about.
 
-### 7.10 The opening prediction: reasoned from the overview, aimed at the central claim **[D] + [U]**
-The default tutor opens every node with `quiz.predict`. Given §7.9's narrow effect, it targets the
+### 7.10 The opening prediction: few, reasoned from the overview, aimed at the central claim **[D] + [U]**
+The default tutor opens a node with `quiz.predict` only when the node has one, and most nodes
+should not. Write it for the **core nodes that carry the paper's mechanism or main result**,
+typically a third of the core nodes, never a prereq or extension (the verifier warns
+`PREDICT_ON_SUPPORT`). A prediction before every section is a toll on reading, and §7.9's
+evidence says the benefit lands only on what was asked. Everything else opens straight into its
+body. Given §7.9's narrow effect, it targets the
 node's central claim, never a side detail. And because the reader has only read the overview and
 the hook, it must be answerable by reasoning from those two, not by recall: "if you ran RL on a
 model that has only been pretrained, why might it learn almost nothing?", never "on RE-Bench at 32

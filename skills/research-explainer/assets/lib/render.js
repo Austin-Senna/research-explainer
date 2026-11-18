@@ -284,7 +284,7 @@ export function renderNode(node, { reaskOf = null, pretest = null, prediction = 
       ${diagram}
       ${figures}
       <div class="layer layer-concrete">${renderProse(node.spiral?.concrete)}</div>
-      <div class="layer layer-formal">${renderProse(node.spiral?.formal)}</div>
+      ${node.spiral?.formal ? `<div class="layer layer-formal">${renderProse(node.spiral.formal)}</div>` : ''}
       ${wrongTurn}
       ${renderQuiz(node)}
       ${offer ? renderTutorOffer() : ''}

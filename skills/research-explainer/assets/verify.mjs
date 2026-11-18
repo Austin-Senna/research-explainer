@@ -20,8 +20,11 @@ export function checkStructure(doc, errors) {
       if (n[f] === undefined || n[f] === null) err(errors, 'MISSING_FIELD', id, `${f} is absent`);
     }
     if (n.kind && !KINDS.has(n.kind)) err(errors, 'BAD_KIND', id, `kind "${n.kind}" is not one of prereq/core/extension`);
+    // Rule 6.1: only core nodes carry all three layers. A prerequisite or extension is the
+    // intuition and one concrete instance; a formal layer there is optional.
     if (n.spiral) {
       for (const layer of SPIRAL_LAYERS) {
+        if (layer === 'formal' && n.kind !== 'core') continue;
         if (!n.spiral[layer]) err(errors, 'MISSING_FIELD', id, `spiral.${layer} is absent`);
       }
     }
@@ -166,17 +169,40 @@ export function checkGraph(doc, errors) {
 
 const MAX_CUES = 10;
 const MAX_BLOCK_WORDS = 250;
+// Rule 6.8: explanation words per node, by kind. Core carries the paper; support stays short.
+export const WORD_BUDGET = { prereq: 150, extension: 200, core: 350 };
 const CONNECTIVES = ['but', 'therefore', 'so', 'because', 'however', 'yet', 'instead', 'which is why', 'unless'];
 
 function warn(list, code, nodeId, message) { list.push({ code, nodeId, message }); }
 
 export function checkWarnings(doc, warnings) {
   const nodes = [...(doc.nodes ?? [])].sort((a, b) => a.order - b.order);
-  // The default tutor opens each section with this question; without it the page falls back to
-  // an MCQ stem, which usually tests recall of the section rather than a prediction about it.
+  // Rule 7.10: the default tutor opens only the sections that carry quiz.predict, and those
+  // should be the few core ones worth predicting. None at all means it never opens with one.
+  if (nodes.length && !nodes.some(n => String(n.quiz?.predict ?? '').trim())) {
+    warn(warnings, 'NO_PREDICT', null, 'no node has quiz.predict; the tutor-first page never opens with a prediction');
+  }
   for (const n of nodes) {
-    if (!String(n.quiz?.predict ?? '').trim()) {
-      warn(warnings, 'NO_PREDICT', n.id, 'no quiz.predict; the opening question falls back to an MCQ stem');
+    if (n.kind !== 'core' && String(n.quiz?.predict ?? '').trim()) {
+      warn(warnings, 'PREDICT_ON_SUPPORT', n.id, `quiz.predict on a ${n.kind} node; predictions belong on core nodes`);
+    }
+  }
+
+  // Rule 6.8: length follows importance. Explanation words are the spiral plus the wrong turn.
+  for (const n of nodes) {
+    const budget = WORD_BUDGET[n.kind];
+    if (!budget) continue;
+    const words = [n.spiral?.intuition, n.spiral?.concrete, n.spiral?.formal, n.wrongTurn?.belief, n.wrongTurn?.correction]
+      .reduce((sum, t) => sum + normalizeWords(t ?? '').length, 0);
+    if (words > budget) warn(warnings, 'OVER_BUDGET', n.id, `${words} words; a ${n.kind} node gets ${budget}`);
+  }
+
+  // Rule 6.5: the idea comes before its name. A term in bold in the opening sentence is a
+  // definition-first opening.
+  for (const n of nodes) {
+    const first = String(n.spiral?.intuition ?? '').split(/(?<=[.!?])\s+/)[0] ?? '';
+    if (/\*\*[^*]+\*\*/.test(first)) {
+      warn(warnings, 'NAME_FIRST', n.id, 'the intuition opens by naming a term; explain the idea in plain words, then name it');
     }
   }
 

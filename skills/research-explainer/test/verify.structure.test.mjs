@@ -44,3 +44,14 @@ test('errors and warnings are always arrays', () => {
   assert.ok(Array.isArray(errors));
   assert.ok(Array.isArray(warnings));
 });
+
+test('only core nodes need a formal layer', () => {
+  const d = JSON.parse(readFileSync(new URL('./fixtures/attention.nodes.json', import.meta.url)));
+  const prereq = d.nodes.find(n => n.kind === 'prereq');
+  const core = d.nodes.find(n => n.kind === 'core');
+  delete prereq.spiral.formal;
+  delete core.spiral.formal;
+  const { errors } = verify(d, readFileSync(new URL('./fixtures/attention.source.txt', import.meta.url), 'utf8'));
+  assert.ok(!errors.some(e => e.nodeId === prereq.id && /formal/.test(e.message)));
+  assert.ok(errors.some(e => e.nodeId === core.id && /spiral\.formal/.test(e.message)));
+});

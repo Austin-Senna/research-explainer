@@ -174,3 +174,10 @@ test('pipe tables render with a header row, and a stray pipe in prose does not',
 test('quotes render as blockquotes and stay escaped', () => {
   assert.equal(renderProse('> the paper says <this>'), '<blockquote><p>the paper says &lt;this&gt;</p></blockquote>');
 });
+
+test('a node without a formal layer renders no empty formal block', () => {
+  const d = JSON.parse(readFileSync(new URL('./fixtures/attention.nodes.json', import.meta.url)));
+  const n = d.nodes.find(x => x.kind === 'prereq');
+  delete n.spiral.formal;
+  assert.ok(!renderNode(n, d).includes('layer-formal'));
+});
