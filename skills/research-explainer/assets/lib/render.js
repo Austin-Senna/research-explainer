@@ -1,7 +1,7 @@
 // Pure HTML string builders. No DOM access, no storage, no side effects.
 import { buildTree } from './tree.js';
 import { QUICK_PROMPTS, MODEL_TIERS } from './ask.js';
-import { LEVEL_NAMES, MAX_LEVEL, TALK_PER_ROUND as TALK_COUNT } from './tutor.js';
+import { LEVEL_NAMES, MAX_LEVEL, TALK_PER_ROUND } from './tutor.js';
 
 export function escapeHtml(text) {
   return String(text ?? '')
@@ -110,13 +110,25 @@ export function renderSidebar(nodes, { currentId, passed = new Set(), levels = n
     if (node.id === currentId) classes.push('is-current');
     const current = node.id === currentId ? ' aria-current="true"' : '';
     const kids = children.length ? `<ul class="tree-children">${children.map(item).join('')}</ul>` : '';
-    const mark = node.kind === 'prereq' ? '<span class="mark" aria-label="added for you">⚡</span>' : '';
     const tick = passed.has(node.id) ? '<span class="tick" aria-label="passed">✓</span>' : '';
     const level = levels?.has(node.id) ? renderLevel(levels.get(node.id)) : '';
-    return `<li><a href="#${escapeHtml(node.id)}" data-id="${escapeHtml(node.id)}" class="${classes.join(' ')}"${current}>${tick}${mark}<span class="label">${escapeHtml(node.title)}</span>${level}</a>${kids}</li>`;
+    return `<li><a href="#${escapeHtml(node.id)}" data-id="${escapeHtml(node.id)}" class="${classes.join(' ')}"${current}>${tick}<span class="label">${escapeHtml(node.title)}</span>${level}</a>${kids}</li>`;
   };
-  return `<ul class="tree-root">${buildTree(nodes).map(item).join('')}</ul>`;
+  // Top-level sections are grouped under plain headings by kind, in reading order: a new heading
+  // wherever the kind changes. A reader sees what is background before reading it, with no
+  // symbol to decode.
+  const groups = [];
+  for (const root of buildTree(nodes)) {
+    const kind = root.node.kind;
+    if (groups.at(-1)?.kind !== kind) groups.push({ kind, roots: [] });
+    groups.at(-1).roots.push(root);
+  }
+  return groups.map(g => `
+    <p class="tree-group">${escapeHtml(GROUP_NAMES[g.kind] ?? '')}</p>
+    <ul class="tree-root">${g.roots.map(item).join('')}</ul>`).join('');
 }
+
+export const GROUP_NAMES = { prereq: 'Background', core: 'Main', extension: 'Going further' };
 
 // A section's multiple-choice question, as quiz time shows it. Option order is preserved from the
 // document; correctness is never emitted here.
@@ -184,7 +196,7 @@ export function renderCheckpoint(cp, round, { nodes = new Map(), levels = new Ma
   const mcqs = cp.nodes.map(id => nodes.get(id)).filter(Boolean).map(renderMcqs).join('');
   const summary = answered.length
     ? `<p class="checkpoint-lead">Multiple choice: ${right} of ${answered.length} right.</p>` : '';
-  const talkCount = Math.min(TALK_COUNT, cp.nodes.length);
+  const talkCount = Math.min(TALK_PER_ROUND, cp.nodes.length);
   const body = {
     mcq: `
       <p class="checkpoint-lead">${cp.nodes.length === 1 ? 'One question' : `${cp.nodes.length} quick questions`} on the main ideas above${talk ? `, then ${talkCount} to talk through with the tutor` : ''}. Skip it if you have it.</p>

@@ -36,11 +36,15 @@ test('the sidebar nests children under their parent', () => {
   assert.ok(parentIdx < childIdx && childIdx < nextRoot, 'child must sit between its parent and the next root');
 });
 
-test('the sidebar marks the current node, prereqs, and passed nodes', () => {
+test('the sidebar marks the current node and passed nodes, and groups sections under plain headings', () => {
   const html = renderSidebar(doc().nodes, { currentId: 'multi-head', passed: new Set(['prereq-dot-product']) });
   assert.match(html, /data-id="multi-head"[^>]*aria-current="true"/);
-  assert.match(html, /data-id="prereq-dot-product"[^>]*class="[^"]*is-prereq/);
   assert.match(html, /data-id="prereq-dot-product"[^>]*class="[^"]*is-passed/);
+  const b = html.indexOf('>Background<'), m = html.indexOf('>Main<'), g = html.indexOf('>Going further<');
+  assert.ok(b >= 0 && b < html.indexOf('prereq-dot-product') && html.indexOf('prereq-dot-product') < m);
+  assert.ok(m < html.indexOf('data-id="scaled-dot-product"') && html.indexOf('data-id="multi-head"') < g);
+  assert.ok(g < html.indexOf('data-id="positional-encoding"'));
+  assert.doesNotMatch(html, /⚡/);
 });
 
 test('a node renders all three spiral layers in reading order', () => {

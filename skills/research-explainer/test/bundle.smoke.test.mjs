@@ -28,7 +28,7 @@ function fakeDom(nodes) {
   return doc;
 }
 
-function runBundle(nodes, tutor = null) {
+function runBundle(nodes, tutor = null, hash = '') {
   const src = bundle();
   const document = fakeDom(nodes);
   const errors = [];
@@ -39,7 +39,7 @@ function runBundle(nodes, tutor = null) {
     localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
   };
   const sandbox = {
-    window: win, document, location: { hash: '', reload() {} },
+    window: win, document, location: { hash, reload() {} },
     CSS: { escape: (s) => s }, console,
     localStorage: win.localStorage, matchMedia: win.matchMedia,
     setTimeout, clearTimeout, AbortController,
@@ -66,4 +66,17 @@ test('the bundle survives a document with no nodes', () => {
 test('the bundle evaluates in every tutor variant with no sample capability', () => {
   const doc = JSON.parse(readFileSync(new URL('./fixtures/attention.nodes.json', import.meta.url)));
   for (const mode of ['off', 'panel', 'first']) assert.doesNotThrow(() => runBundle(doc, mode), mode);
+});
+
+test('the bundle evaluates when it opens on a section that ends in quiz time', async () => {
+  const { checkpointsFor } = await import('../assets/lib/tutor.js');
+  const doc = JSON.parse(readFileSync(new URL('./fixtures/attention.nodes.json', import.meta.url)));
+  const anchor = checkpointsFor(doc.nodes)[0].anchor;
+  for (const mode of ['off', 'checkpoints', 'first']) assert.doesNotThrow(() => runBundle(doc, mode, `#${anchor}`), mode);
+});
+
+test('the bundle has no renamed imports, which concatenation would silently drop', () => {
+  const sources = ['explainer.js', 'lib/render.js', 'lib/tutor.js', 'lib/ask.js', 'lib/sources.js', 'lib/quiz.js', 'lib/tree.js', 'lib/storage.js', 'lib/typing.js']
+    .map(f => readFileSync(new URL(`../assets/${f}`, import.meta.url), 'utf8'));
+  for (const src of sources) assert.doesNotMatch(src, /^import \{[^}]*\bas\b[^}]*\}/m);
 });

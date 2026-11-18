@@ -54,7 +54,9 @@ body {
 .tree-item.is-ancestor { color: var(--ink); }
 .tree-item.is-passed .label { color: var(--ink); }
 .tick { color: var(--ok); }
-.mark { color: var(--accent); }
+.tree-group { margin: 1.1rem 0 .3rem; padding-left: .45rem; font-size: .7rem; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .08em; color: var(--ink-soft); }
+.tree-group:first-of-type { margin-top: 0; }
 
 main { padding: 3rem 2rem 6rem; }
 .node { max-width: var(--measure); margin: 0 auto; }

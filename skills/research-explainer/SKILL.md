@@ -338,8 +338,10 @@ branches. Breadth is cheap; depth is expensive. 10–20 items per level is fine 
 }
 ```
 
-`kind: "prereq"` earns the ⚡ marker in the sidebar — it exists only because the reader failed a
-diagnostic item. Making that visible lets them skip it if the diagnostic was wrong about them.
+The sidebar groups top-level sections under plain headings by `kind`: **Background** (prereq),
+**Main** (core) and **Going further** (extension). Background exists only because the reader
+missed a diagnostic item; showing it as its own group lets them skip it if the check was wrong
+about them.
 
 ## Where to look
 
