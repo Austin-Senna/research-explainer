@@ -1,6 +1,6 @@
 # research-explainer
 
-A Claude Code plugin that turns a paper, arXiv ID or topic into an interactive explainer you learn from, not just read. It checks what you already know, adds prerequisite nodes for the gaps, explains each idea at three levels, quizzes you as you go, and publishes the result as a single HTML page (a Claude artifact, or a local file).
+A Claude Code plugin that turns a paper, arXiv ID or topic into an interactive explainer you learn from, not just read. It checks what you already know, adds short background sections for the gaps, explains each idea in plain words before naming it, quizzes you on the parts the paper's claims rest on, and publishes the result as a single HTML page (a Claude artifact, or a local file).
 
 https://github.com/user-attachments/assets/880d88f2-fd43-4f72-8f44-15e12b5036d7
 
@@ -43,8 +43,8 @@ Or hand it a source directly:
 ### How a run goes
 
 1. **Find the source.** A topic triggers a search, and you pick from 4 to 6 candidates. An arXiv ID, path or URL is used as is.
-2. **Probe what you know.** It asks whether you have experience with the topic, plus depth and image settings. If you say yes, it checks with 4 or 5 quick true-or-false statements about the actual content instead of trusting a self-rating. Gaps become prerequisite nodes, marked ⚡ so you can skip any it got wrong.
-3. **You pick extra resources.** It shows the planned tree and proposes named resources that fill your specific gaps: a tutorial for a missing prerequisite, the paper a claim leans on, a replication of a result. Each comes with what it adds and an estimated cost (about $1 each). Nothing beyond the source and one search is spent until you choose.
+2. **Probe what you know.** It asks whether you have experience with the topic, plus depth and image settings. If you say yes, it checks with 4 or 5 quick true-or-false statements, written in plain words, instead of trusting a self-rating. Each statement names the background section it decides. Gaps become short sections under **Background** in the contents, so you can skip any it got wrong.
+3. **You pick extra resources.** It shows the planned outline, with a ★ on the few sections the paper's claims rest on (those are the ones you get quizzed on), and proposes named resources that fill your specific gaps: a tutorial for a missing prerequisite, the paper a claim leans on, a replication of a result. Each comes with what it adds and an estimated cost (about $1 each). Nothing beyond the source and one search is spent until you choose.
 4. **Research and write.** Subagents read only what you picked. The explanation is then written from the source and those resources.
 5. **Verify, then ship.** A deterministic checker (plain code, not a model) must pass before anything is built. You get a local page at `~/explainers/<slug>/` (or a folder you name) and, if connected to claude.ai, a published artifact.
 
@@ -54,16 +54,18 @@ A quick run with no extra resources costs about $1.50 to $2.
 
 - **Required:** Node.js 20 or later.
 - **Optional:** `pdftoppm` (poppler) for cropping figures the arXiv HTML dropped; a browser tool (Playwright MCP or Claude in Chrome) for screenshotting inline-SVG figures and checking visuals; the Artifact tool (Claude Code connected to claude.ai) for publishing. Without it you get a local `index.html`.
-- **Outside claude.ai:** the chat panel and essay grading need the claude.ai viewer and hide themselves otherwise. Mermaid diagrams load from jsDelivr, so a local file needs internet for them.
+- **Outside claude.ai:** the chat panel and the tutor need the claude.ai viewer and hide themselves otherwise; quiz time's multiple choice works anywhere. Mermaid diagrams load from jsDelivr, so a local file needs internet for them.
 
 ## What you get
 
-- Prerequisite scaffolding, sized to what you already know
-- Spiral explanations: intuition, then a concrete case, then the formal version
-- Multiple-choice checks with explanations for every option
-- Graded one-sentence self-explanations
-- The paper's own figures, plus diagrams where they help
-- A side chat that reads the sources
+- Short background sections, sized to what you already know, grouped apart from the main content
+- Plain explanations with a word budget per section: the idea first, then its name; the formal version sits under a collapsed **Details**
+- Every claim linked to its source, and each section's sources listed under its title
+- The paper's own figures, plus diagrams that build up one step at a time
+- Quiz time after the big sections: multiple choice first, then two questions with a Socratic tutor aimed at what you missed, tracking a level per key section
+- Prediction questions before the key sections (optional, `--tutor checkpoints` turns them off)
+- A side chat that reads the sources, in a panel you can resize; the contents fold away
+- Notes on what could not be verified, kept in a collapsed dropdown
 
 ## Sharing and copyright
 
