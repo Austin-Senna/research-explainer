@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync, mkdirSync, cpSync, existsSync } from 'node:fs';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { resolve, dirname, extname } from 'node:path';
+import { TUTOR_VARIANTS } from './lib/tutor.js';
 
 const here = (p) => new URL(p, import.meta.url);
 const read = (p) => readFileSync(here(p), 'utf8');
@@ -55,10 +56,10 @@ export function inlineFigures(doc, baseDir) {
 // `sources` is the full text of every source ([{label, url, text}]). A published page cannot
 // fetch, so this is the only way the chat can read them.
 //
-// `tutor` picks the tutor's entry experience: 'first' (the default: each section opens with a
-// prediction question, then the tutor follows up), 'panel' (Tutor is only a mode in the chat
-// panel) or 'off'.
-export const TUTOR_MODES = ['first', 'panel', 'off'];
+// `tutor` picks how the tutor appears: 'first' (the default: prediction questions before the key
+// sections, and skippable quiz-time checkpoints between big sections), 'checkpoints' (the
+// checkpoints alone) or 'off'. One list, shared with the page.
+export const TUTOR_MODES = TUTOR_VARIANTS;
 
 export function buildHtml(doc, sources = null, { tutor = 'first' } = {}) {
   if (!TUTOR_MODES.includes(tutor)) throw new Error(`--tutor must be one of ${TUTOR_MODES.join(', ')}; got ${tutor}`);

@@ -2,15 +2,16 @@
 import { neighbors, linearOrder, ancestorsOf, isOpening } from './lib/tree.js';
 import { gradeMcq, recordAnswer, scheduleReasks } from './lib/quiz.js';
 import { createStore } from './lib/storage.js';
-import { renderSidebar, renderNode, renderMasthead, renderChat, renderProse, renderSkillMap, renderSaveState, escapeHtml, stepIndex } from './lib/render.js';
+import { renderSidebar, renderNode, renderMasthead, renderChat, renderProse, renderSkillMap, renderSaveState, renderCheckpoint, escapeHtml, stepIndex } from './lib/render.js';
 import { nodeContext, buildTurns, promptBudget, essayPrompt, VERDICT_COPY, copyForError, isFatal, tierLabel, toolStatus, nextTier, appendTurns } from './lib/ask.js';
 import { chunkSources, searchChunks, formatExcerpts, catalog, sourceTools } from './lib/sources.js';
 import { nextReveal } from './lib/typing.js';
 // One import per line: the bundler strips imports line by line.
-import { tutorVariant, createTutor, levelOf, validateAssessment, applyAssessment, applyPageSignal } from './lib/tutor.js';
-import { openMove, tellMove, difficultyMove, pretestMove, parseCommand, tutorTurns, gradePrompt } from './lib/tutor.js';
+import { tutorVariant, createTutor, levelOf, validateAssessment, applyPageSignal } from './lib/tutor.js';
+import { tellMove, difficultyMove, pretestMove, parseCommand, tutorTurns, gradePrompt } from './lib/tutor.js';
 import { pretestQuestion, needsPretest, recordPretest, skillRows, overallPercent, levelChangeCopy, saveState } from './lib/tutor.js';
 import { trackedNodes, placement, placeTutor, diagnosticLine, weakestAreas } from './lib/tutor.js';
+import { checkpointsFor, createRound, startRound, applyRound } from './lib/tutor.js';
 
 const doc = window.NODES;
 if (doc) start(doc);
@@ -51,15 +52,23 @@ function start(doc) {
   const tracked = trackedNodes(nodes);
   state.tutor = placeTutor(createTutor(state.tutor), placement(doc));
   if (state.tutor.pending && !byId.has(state.tutor.pending.node)) state.tutor.pending = null;
-  state.chatMode = variant !== 'off' && state.chatMode === 'tutor' ? 'tutor' : 'ask';
-  let tutorApi = null;         // set once the chat is wired
+  // Quiz time: the tutor runs inline after each big section (lib/tutor.js checkpointsFor), one
+  // round of questions per checkpoint, each round kept in this browser.
+  const checkpoints = variant === 'off' ? [] : checkpointsFor(nodes);
+  const cpByAnchor = new Map(checkpoints.map(c => [c.anchor, c]));
+  state.rounds = state.rounds && typeof state.rounds === 'object' ? state.rounds : {};
+  delete state.chatMode; // the panel is Ask only
   let signalsInFlight = null;  // quiz signals that arrive while a tutor reply is streaming
+  const order = tracked.map(n => n.id); // what reviews and the final assessment draw on
+  // One conversation at a time across the page: the Ask panel and every quiz-time block share it.
+  let controller = null;
+  let activeTyping = null; // the answer still being revealed, so Stop can finish it at once
+  const lastSection = new WeakMap(); // per thread: the section of the most recent question, for dividers
   const tutorOn = () => Boolean(sampleFn) && variant !== 'off';
-  const isNarrow = () => matchMedia('(max-width: 720px)').matches;
 
   document.querySelector('.doc-title').textContent = doc.meta?.title ?? '';
   document.getElementById('masthead').innerHTML = renderMasthead(doc.meta ?? {});
-  document.getElementById('chat').innerHTML = renderChat({ sourceCount: sources.length, tier: state.modelTier, tutor: variant !== 'off' });
+  document.getElementById('chat').innerHTML = renderChat({ sourceCount: sources.length, tier: state.modelTier });
   wireTheme();
   render();
 
@@ -154,15 +163,18 @@ function start(doc) {
   function persist() { store.save(state); }
 
   function paintTree() {
-    // Levels show once the tutor is in play: from the start in the tutor-first variant, and after
-    // the reader first uses the tutor in the panel variant, which otherwise reads as it always has.
-    const levels = tutorOn() && (variant === 'first' || state.tutor.started)
-      ? new Map(tracked.map(n => [n.id, levelOf(state.tutor, n.id)])) : null;
+    // Levels show on the tracked sections whenever the tutor is available.
+    const levels = tutorOn() ? levelMap() : null;
     document.getElementById('tree').innerHTML = renderSidebar(nodes, { currentId, passed: passedSet(), levels });
     for (const a of ancestorsOf(nodes, currentId)) {
       document.querySelector(`[data-id="${CSS.escape(a.id)}"]`)?.classList.add('is-ancestor');
     }
-    tutorApi?.refresh();
+  }
+
+  function levelMap() { return new Map(tracked.map(n => [n.id, levelOf(state.tutor, n.id)])); }
+  function roundOf(cp) { return createRound(state.rounds[cp.id]); }
+  function checkpointHtml(cp) {
+    return renderCheckpoint(cp, roundOf(cp), { titles: new Map(nodes.map(n => [n.id, n.title])), levels: levelMap() });
   }
 
   // Evidence from the page's own quiz. Counted conservatively by lib/tutor.js.
@@ -190,14 +202,16 @@ function start(doc) {
     // The tree is always fully expanded: spec §10 prefers adjacent depth to hidden depth,
     // since expandable indexes tested ~50% slower. Ancestors are only highlighted.
     paintTree();
+    const cp = tutorOn() ? cpByAnchor.get(node.id) : null;
     document.getElementById('content').innerHTML = renderNode(node, {
       reaskOf,
       pretest: question,
       prediction: tutorOn() ? state.tutor.pretests[node.id] : null,
-      offer: tutorOn(),
+      checkpoint: cp ? checkpointHtml(cp) : '',
     });
     document.getElementById('masthead').hidden = !isOpening(nodes, currentId);
     if (tutorOn()) wireTutorInline(document.getElementById('content'), node, question);
+    if (cp) wireCheckpoint(cp);
 
     const { prev, next } = neighbors(nodes, currentId);
     wirePager('.prev', prev);
@@ -213,8 +227,8 @@ function start(doc) {
     if (!keepScroll) window.scrollTo(0, 0);
   }
 
-  // The tutor's pieces inside the article: the prediction card, the note that keeps the reader's
-  // prediction in view, and the offer at the end of the section.
+  // The prediction card, and the note that keeps the reader's guess in view with the tutor's
+  // short reply under it. The reply is a statement, not a question: questioning happens at quiz time.
   function wireTutorInline(root, node, question) {
     const reveal = (guess) => {
       state.tutor = recordPretest(state.tutor, node.id, { guess, question });
@@ -223,28 +237,35 @@ function start(doc) {
       const heading = document.querySelector('.node h2');
       heading?.setAttribute('tabindex', '-1');
       heading?.focus({ preventScroll: true });
-      if (!state.tutor.pretests[node.id]?.guess) return;
-      // The body the reader just earned stays in view: at phone width the panel would cover it,
-      // so there the follow-up waits behind the note's button.
-      if (!isNarrow()) tutorApi?.show({ focus: false });
-      tutorApi?.step({ action: 'pretest' });
+      if (state.tutor.pretests[node.id]?.guess) predictionReply(node);
     };
     const form = root.querySelector('[data-pretest]');
-    if (form) {
-      form.addEventListener('submit', (e) => { e.preventDefault(); reveal(form.querySelector('[data-pretest-input]').value); });
-      form.querySelector('[data-pretest-skip]').addEventListener('click', () => reveal(''));
-      form.querySelector('[data-pretest-off]').addEventListener('click', () => {
-        state.tutor = { ...state.tutor, pretestOff: true };
-        persist();
-        render({ keepScroll: true });
-      });
-    }
-    root.querySelector('[data-open-tutor]')?.addEventListener('click', () => tutorApi?.show());
-    root.querySelector('[data-tutor-offer]')?.addEventListener('click', () => {
-      tutorApi?.show();
-      // An open question stays open; otherwise the tutor starts on this section.
-      if (state.tutor.pending?.node !== node.id) tutorApi?.step({ action: 'open' });
+    if (!form) return;
+    form.addEventListener('submit', (e) => { e.preventDefault(); reveal(form.querySelector('[data-pretest-input]').value); });
+    form.querySelector('[data-pretest-skip]').addEventListener('click', () => reveal(''));
+    form.querySelector('[data-pretest-off]').addEventListener('click', () => {
+      state.tutor = { ...state.tutor, pretestOff: true };
+      persist();
+      render({ keepScroll: true });
     });
+  }
+
+  function predictionReply(node) {
+    const box = document.querySelector('[data-prediction-reply]');
+    if (!box) return;
+    const pretest = state.tutor.pretests[node.id];
+    const surface = { thread: box, quiet: true };
+    const step = pretestMove(state.tutor, node.id);
+    return exchange(surface, null, async () => ({
+      turns: tutorTurns(doc.meta, node, [], `My prediction: ${pretest.guess}`, step.move, {
+        guess: pretest.guess, question: pretest.question, diagnostic: diagnosticLine(doc), maxBytes,
+      }),
+      used: new Set(),
+      commit: (entry) => {
+        // recordPretest already marked the section as just told; only the reply is new.
+        state.tutor = { ...state.tutor, pretests: { ...state.tutor.pretests, [node.id]: { ...pretest, reply: entry.content } } };
+      },
+    }));
   }
 
   // Mermaid loads from the CDN only when a node actually has a Mermaid diagram, and takes its colours
@@ -398,11 +419,8 @@ function start(doc) {
     if (open && focus) chat.querySelector('[data-ask-input]')?.focus({ preventScroll: true });
   }
 
-  // Each mode has its own message list, so a switch hides one and shows the other and an answer
-  // still arriving keeps writing into the list it belongs to.
-  function threadEl(mode = state.chatMode) { return document.querySelector(`[data-thread="${mode}"]`); }
-  function emptyEl(mode) { return document.querySelector(mode === 'tutor' ? '[data-tutor-empty]' : '[data-chat-empty]'); }
-  function threadOf(mode) { return mode === 'tutor' ? state.tutor.thread : state.chat; }
+  // A surface is where one conversation shows: the Ask panel, a checkpoint's quiz-time block, or
+  // the note under a prediction. { thread, empty?, dividers?, busy?(on) }
 
   // Scroll the message list, never the page. scrollIntoView() scrolls every scrollable ancestor,
   // and because the panel is sticky that dragged the whole page back up on every message. Only
@@ -410,19 +428,17 @@ function start(doc) {
   function nearBottom(el) { return el.scrollHeight - el.scrollTop - el.clientHeight < 48; }
   function follow(el, wasNear) { if (wasNear) el.scrollTop = el.scrollHeight; }
 
-  const lastSection = { ask: null, tutor: null }; // the section of the most recent question shown, for dividers
-
-  function addTurn(entry, mode = 'ask', { before = null } = {}) {
-    const thread = threadEl(mode);
+  function addTurn(entry, surface, { before = null } = {}) {
+    const thread = surface.thread;
     if (!thread) return null;
     const wasNear = nearBottom(thread);
     // A divider wherever the reader asked from a different section than the question before.
-    if (entry.role === 'user' && entry.section && entry.section !== lastSection[mode]) {
+    if (surface.dividers && entry.role === 'user' && entry.section && entry.section !== lastSection.get(thread)) {
       const divider = document.createElement('p');
       divider.className = 'turn-section';
       divider.textContent = byId.get(entry.section)?.title ?? '';
       thread.append(divider);
-      lastSection[mode] = entry.section;
+      lastSection.set(thread, entry.section);
     }
     const el = document.createElement('div');
     const kind = { user: 'q', assistant: 'a', note: 'note' }[entry.role] ?? 'err';
@@ -433,7 +449,7 @@ function start(doc) {
         + '<span data-status-text></span></div><div class="turn-body" data-body></div>'
         + '<p class="turn-meta" data-meta hidden></p>';
       el.querySelector('[data-body]').innerHTML = renderProse(entry.content ?? '');
-      setMeta(el, entry);
+      setMeta(el, entry, surface);
     } else if (entry.role === 'user') {
       // The reader's own message gets the same formatting, so bullets they type show as bullets.
       el.innerHTML = `<div class="turn-body">${renderProse(entry.content)}</div>`;
@@ -441,7 +457,7 @@ function start(doc) {
       el.textContent = entry.content;
     }
     if (before) before.before(el); else thread.append(el);
-    emptyEl(mode).hidden = true;
+    if (surface.empty) surface.empty.hidden = true;
     follow(thread, wasNear || entry.role === 'user');
     return el;
   }
@@ -452,23 +468,23 @@ function start(doc) {
     if (text) el.querySelector('[data-status-text]').textContent = text;
   }
 
-  function setMeta(el, { sources: used = [], tier, note } = {}) {
+  function setMeta(el, { sources: used = [], tier, note } = {}, { quiet = false } = {}) {
     const meta = el.querySelector('[data-meta]');
     const parts = [];
     if (used.length) parts.push(`Sources: ${used.join(' · ')}`);
     if (note) parts.push(note);
-    else if (tier) parts.push(tierLabel(tier));
-    meta.textContent = parts.join('  —  ');
+    else if (tier && !quiet) parts.push(tierLabel(tier));
+    meta.textContent = parts.join('  ·  ');
     meta.hidden = !parts.length;
   }
 
-  function restoreThread(mode = 'ask') {
-    const thread = threadEl(mode);
+  function restoreThread(surface, turns) {
+    const thread = surface.thread;
     if (!thread) return;
     thread.innerHTML = '';
-    lastSection[mode] = null;
-    for (const t of threadOf(mode)) addTurn(t, mode);
-    emptyEl(mode).hidden = mode !== state.chatMode || threadOf(mode).length > 0;
+    lastSection.delete(thread);
+    for (const t of turns) addTurn(t, surface);
+    if (surface.empty) surface.empty.hidden = turns.length > 0;
     thread.scrollTop = thread.scrollHeight;
   }
 
@@ -506,34 +522,8 @@ function start(doc) {
     };
   }
 
-  function wireChat() {
-    const panel = document.getElementById('chat');
-    const toggle = document.getElementById('chat-toggle');
-    const form  = panel.querySelector('[data-ask-form]');
-    const input = panel.querySelector('[data-ask-input]');
-    const send  = panel.querySelector('[data-ask-send]');
-    const model = panel.querySelector('[data-chat-model]');
-    let controller = null;
-    let activeTyping = null; // the answer still being revealed, so Stop can finish it at once
-
-    restoreThread('ask');
-    toggle.addEventListener('click', () => setChatOpen(panel.hidden));
-    panel.querySelector('[data-chat-close]').addEventListener('click', () => setChatOpen(false));
-    panel.querySelector('[data-chat-clear]').addEventListener('click', () => {
-      controller?.abort();
-      // Clearing the tutor's conversation drops the open question, never the levels earned.
-      if (state.chatMode === 'tutor') state.tutor = { ...state.tutor, thread: [], pending: null };
-      else state.chat = [];
-      persist();
-      restoreThread(state.chatMode);
-    });
-    model.addEventListener('change', () => { state.modelTier = model.value; persist(); });
-    for (const chip of panel.querySelectorAll('[data-quick]')) {
-      chip.addEventListener('click', () => ask(chip.dataset.quick));
-    }
-
-    // Grows with the text (upwards, since the composer is pinned to the bottom) until 40% of the
-    // screen, then scrolls; the latest line always stays in view.
+  // Grows with the text until 40% of the screen, then scrolls; the latest line always stays in view.
+  function autoGrow(input) {
     const grow = () => {
       const max = Math.round(window.innerHeight * 0.4);
       input.style.height = 'auto';
@@ -541,6 +531,127 @@ function start(doc) {
       input.style.overflowY = input.scrollHeight > max ? 'auto' : 'hidden';
     };
     input.addEventListener('input', grow);
+    return grow;
+  }
+
+  function stopExchange() { controller?.abort(); activeTyping?.stop(); }
+
+  // One exchange on any surface: show the reader's message (if any), stream Claude's reply, and keep
+  // both only once the reply has fully arrived. `plan` builds the turn list (the tutor grades the
+  // answer there first) and says how to commit the result.
+  async function exchange(surface, asked, plan) {
+    if (!sampleFn || controller) return;
+    if (asked) addTurn(asked, surface);
+    const answerEl = addTurn({ role: 'assistant', content: '' }, surface);
+    const body = answerEl.querySelector('[data-body]');
+    setStatus(answerEl, 'Thinking');
+
+    const tier = state.modelTier;
+    controller = new AbortController(); // a fresh controller per exchange
+    const signal = controller.signal;
+    surface.busy?.(true);
+    const typing = typewriter(body, surface.thread);
+    activeTyping = typing;
+    try {
+      const { turns, used, commit } = await plan({ signal, tier, answerEl, status: (text) => setStatus(answerEl, text) });
+      const options = {
+        signal,
+        cache: false, // a conversation must not replay a stale answer
+        modelTier: tier,
+        onText: ({ text }) => {
+          setStatus(answerEl, '');
+          typing.set(text); // whole answer so far; the typewriter reveals it smoothly
+        },
+      };
+      if (toolsOk) {
+        // Each tool reports what it is doing, so a long multi-round answer never looks frozen.
+        options.tools = sourceTools(sources, chunks).map(tool => ({
+          ...tool,
+          execute: async (args, ctx) => {
+            setStatus(answerEl, toolStatus(tool.name, args, sources));
+            const result = await tool.execute(args, ctx);
+            for (const r of [].concat(result)) if (r?.label) used.add(r.label);
+            setStatus(answerEl, 'Thinking');
+            return result;
+          },
+        }));
+      }
+      const { text, truncated, modelTierApplied } = await sampleFn(turns, options);
+      typing.set(text);
+      await typing.done();
+      const notes = [];
+      if (modelTierApplied && modelTierApplied !== tier) {
+        notes.push(`Answered by ${tierLabel(modelTierApplied)}; ${tierLabel(tier)} is not available on this plan`);
+      }
+      if (truncated) notes.push('Cut short: ask for less at a time');
+      const entry = { role: 'assistant', content: text, sources: [...used], tier: modelTierApplied ?? tier,
+                      note: notes.join('. ') || undefined };
+      setMeta(answerEl, entry, surface);
+      commit(entry);
+      persist();
+    } catch (e) {
+      setStatus(answerEl, '');
+      if (e?.text) {
+        typing.set(e.text);
+        typing.stop(); // show what may be kept at once; a stopped answer should not keep typing
+      } else {
+        typing.stop();
+        answerEl.remove();
+      }
+      if (e?.code === 'tools_unavailable') toolsOk = false;
+      const copy = copyForError(e?.code);
+      if (copy) addTurn({ role: 'error', content: copy }, surface);
+      // A permanent refusal means this view can never sample. Hide everything that would fail
+      // every time: the chat, and with the re-render, the tutor's inline pieces.
+      if (isFatal(e?.code)) {
+        sampleFn = null;
+        setChatOpen(false);
+        document.getElementById('chat-toggle').hidden = true;
+        render({ keepScroll: true });
+      }
+    } finally {
+      controller = null;
+      activeTyping = null;
+      surface.busy?.(false);
+    }
+  }
+
+  function sendButtonBusy(btn) {
+    return (on) => {
+      if (!btn) return;
+      btn.textContent = on ? 'Stop' : 'Send';
+      btn.classList.toggle('is-stop', on);
+    };
+  }
+
+  function wireChat() {
+    const panel = document.getElementById('chat');
+    const toggle = document.getElementById('chat-toggle');
+    const form  = panel.querySelector('[data-ask-form]');
+    const input = panel.querySelector('[data-ask-input]');
+    const model = panel.querySelector('[data-chat-model]');
+    const surface = {
+      thread: panel.querySelector('[data-thread="ask"]'),
+      empty: panel.querySelector('[data-chat-empty]'),
+      dividers: true,
+      busy: sendButtonBusy(panel.querySelector('[data-ask-send]')),
+    };
+
+    restoreThread(surface, state.chat);
+    toggle.addEventListener('click', () => setChatOpen(panel.hidden));
+    panel.querySelector('[data-chat-close]').addEventListener('click', () => setChatOpen(false));
+    panel.querySelector('[data-chat-clear]').addEventListener('click', () => {
+      stopExchange();
+      state.chat = [];
+      persist();
+      restoreThread(surface, state.chat);
+    });
+    model.addEventListener('change', () => { state.modelTier = model.value; persist(); });
+    for (const chip of panel.querySelectorAll('[data-quick]')) {
+      chip.addEventListener('click', () => ask(chip.dataset.quick));
+    }
+
+    const grow = autoGrow(input);
     input.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); form.requestSubmit(); }
       if (e.key === 'Tab' && e.shiftKey) {
@@ -552,99 +663,13 @@ function start(doc) {
     // One button: Send when idle, Stop while an answer is coming.
     form.addEventListener('submit', (e) => {
       e.preventDefault();
-      if (controller) { controller.abort(); activeTyping?.stop(); return; }
+      if (controller) { stopExchange(); return; }
       const q = input.value.trim();
       if (!q) return;
       input.value = '';
       grow();
-      if (state.chatMode === 'tutor') tutorStep({ text: q });
-      else ask(q);
+      ask(q);
     });
-
-    function busy(on) {
-      send.textContent = on ? 'Stop' : 'Send';
-      send.classList.toggle('is-stop', on);
-    }
-
-    // One exchange in either mode: show the reader's message, stream Claude's reply into the
-    // mode's own thread, and keep both only once the reply has fully arrived. `plan` builds the
-    // turn list (the tutor grades the answer there first) and says how to commit the result.
-    async function exchange(mode, asked, plan) {
-      if (!sampleFn || controller) return;
-      addTurn(asked, mode);
-      const answerEl = addTurn({ role: 'assistant', content: '' }, mode);
-      const body = answerEl.querySelector('[data-body]');
-      setStatus(answerEl, 'Thinking');
-
-      const tier = state.modelTier;
-      controller = new AbortController(); // a fresh controller per exchange
-      const signal = controller.signal;
-      busy(true);
-      const typing = typewriter(body, threadEl(mode));
-      activeTyping = typing;
-      try {
-        const { turns, used, commit } = await plan({ signal, tier, answerEl, status: (text) => setStatus(answerEl, text) });
-        const options = {
-          signal,
-          cache: false, // a conversation must not replay a stale answer
-          modelTier: tier,
-          onText: ({ text }) => {
-            setStatus(answerEl, '');
-            typing.set(text); // whole answer so far; the typewriter reveals it smoothly
-          },
-        };
-        if (toolsOk) {
-          // Each tool reports what it is doing, so a long multi-round answer never looks frozen.
-          options.tools = sourceTools(sources, chunks).map(tool => ({
-            ...tool,
-            execute: async (args, ctx) => {
-              setStatus(answerEl, toolStatus(tool.name, args, sources));
-              const result = await tool.execute(args, ctx);
-              for (const r of [].concat(result)) if (r?.label) used.add(r.label);
-              setStatus(answerEl, 'Thinking');
-              return result;
-            },
-          }));
-        }
-        const { text, truncated, modelTierApplied } = await sampleFn(turns, options);
-        typing.set(text);
-        await typing.done();
-        const notes = [];
-        if (modelTierApplied && modelTierApplied !== tier) {
-          notes.push(`Answered by ${tierLabel(modelTierApplied)}; ${tierLabel(tier)} is not available on this plan`);
-        }
-        if (truncated) notes.push('Cut short: ask for less at a time');
-        const entry = { role: 'assistant', content: text, sources: [...used], tier: modelTierApplied ?? tier,
-                        note: notes.join('. ') || undefined };
-        setMeta(answerEl, entry);
-        commit(entry);
-        persist();
-      } catch (e) {
-        setStatus(answerEl, '');
-        if (e?.text) {
-          typing.set(e.text);
-          typing.stop(); // show what may be kept at once; a stopped answer should not keep typing
-        } else {
-          typing.stop();
-          answerEl.remove();
-        }
-        if (e?.code === 'tools_unavailable') toolsOk = false;
-        const copy = copyForError(e?.code);
-        if (copy) addTurn({ role: 'error', content: copy }, mode);
-        // A permanent refusal means this view can never sample. Hide it rather than
-        // leaving a control that will fail every time; the tutor's inline pieces go with it.
-        if (isFatal(e?.code)) {
-          sampleFn = null;
-          setChatOpen(false);
-          toggle.hidden = true;
-          render({ keepScroll: true });
-        }
-      } finally {
-        controller = null;
-        activeTyping = null;
-        busy(false);
-      }
-    }
 
     function ask(question) {
       const nodeId = currentId;
@@ -652,7 +677,7 @@ function start(doc) {
       if (!node) return;
       const history = state.chat.filter(t => t.role === 'user' || t.role === 'assistant');
       const asked = { role: 'user', content: question, section: nodeId };
-      return exchange('ask', asked, async () => {
+      return exchange(surface, asked, async () => {
         // Retrieval happens here, not in Claude: the passages most relevant to this question go
         // into the prompt every time, so answers are grounded even where tools are unavailable.
         // The question alone searches best; a content-free prompt ("Explain this more simply")
@@ -671,196 +696,180 @@ function start(doc) {
         };
       });
     }
+  }
 
-    if (variant === 'off') return;
+  // ---- Quiz time. Everything the tutor decides is decided in lib/tutor.js. ----
 
-    // ---- Tutor mode. Everything it decides is decided in lib/tutor.js. ----
-    const sheet = panel.querySelector('[data-tutor-sheet]');
-    const bar = panel.querySelector('[data-tutor-bar]');
-    const drafts = { ask: '', tutor: '' };
-    let sheetKind = null;
-    const order = tracked.map(n => n.id);
+  function checkpointBox(cp) { return document.querySelector(`[data-checkpoint="${CSS.escape(cp.id)}"]`); }
 
-    restoreThread('tutor');
-    for (const btn of panel.querySelectorAll('[data-mode]')) {
-      btn.addEventListener('click', () => setMode(btn.dataset.mode));
+  function checkpointSurface(box) {
+    // quiet: the model tier is not shown under quiz questions.
+    return { thread: box.querySelector('[data-cp-thread]'), quiet: true, busy: sendButtonBusy(box.querySelector('[data-cp-send]')) };
+  }
+
+  function repaintCheckpoint(cp) {
+    const box = checkpointBox(cp);
+    if (!box) return;
+    box.outerHTML = checkpointHtml(cp);
+    wireCheckpoint(cp);
+  }
+
+  function wireCheckpoint(cp) {
+    const box = checkpointBox(cp);
+    if (!box) return;
+    const surface = checkpointSurface(box);
+    const round = roundOf(cp);
+    if (round.thread.length) {
+      restoreThread(surface, round.thread);
+      surface.thread.hidden = false;
     }
-    panel.querySelector('[data-tutor-start]').addEventListener('click', () => tutorStep({ action: 'open' }));
-    for (const btn of bar.querySelectorAll('[data-tutor-action]')) {
-      btn.addEventListener('click', () => {
-        const action = btn.dataset.tutorAction;
-        if (action === 'map' || action === 'save') toggleSheet(action);
-        else tutorStep({ action });
+    box.querySelector('[data-cp-start]')?.addEventListener('click', () => roundStep(cp, { action: 'start' }));
+    box.querySelector('[data-cp-skip]')?.addEventListener('click', () => {
+      stopExchange();
+      state.rounds[cp.id] = { ...roundOf(cp), active: false, skipped: true };
+      persist();
+      repaintCheckpoint(cp);
+    });
+    const form = box.querySelector('[data-cp-form]');
+    if (form) {
+      const input = form.querySelector('[data-cp-input]');
+      const grow = autoGrow(input);
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); form.requestSubmit(); }
+      });
+      form.addEventListener('submit', (e) => {
+        e.preventDefault();
+        if (controller) { stopExchange(); return; }
+        const text = input.value.trim();
+        if (!text) return;
+        input.value = '';
+        grow();
+        roundStep(cp, { text });
       });
     }
-    panel.addEventListener('keydown', (e) => { if (e.key === 'Escape' && sheetKind) closeSheet(); });
-
-    function setMode(mode) {
-      if (mode !== state.chatMode) {
-        drafts[state.chatMode] = input.value;
-        state.chatMode = mode;
-        input.value = drafts[mode];
-        grow();
-        persist();
-      }
-      const tutoring = mode === 'tutor';
-      closeSheet();
-      for (const btn of panel.querySelectorAll('[data-mode]')) {
-        btn.setAttribute('aria-pressed', String(btn.dataset.mode === mode));
-      }
-      for (const m of ['ask', 'tutor']) {
-        threadEl(m).hidden = m !== mode;
-        emptyEl(m).hidden = m !== mode || threadOf(m).length > 0 || threadEl(m).childElementCount > 0;
-      }
-      bar.hidden = !tutoring;
-      const hint = tutoring ? 'Answer the tutor…' : 'Ask about this section…';
-      input.placeholder = hint;
-      input.setAttribute('aria-label', hint.replace('…', ''));
-      const thread = threadEl(mode);
-      thread.scrollTop = thread.scrollHeight;
+    for (const btn of box.querySelectorAll('[data-cp-action]')) {
+      btn.addEventListener('click', () => {
+        const action = btn.dataset.cpAction;
+        if (action === 'map' || action === 'save') toggleSheet(cp, action);
+        else roundStep(cp, { action });
+      });
     }
+  }
 
-    // The skill map and the save-state block share one sheet that takes the thread's place.
-    function toggleSheet(kind) { if (sheetKind === kind) closeSheet(); else openSheet(kind); }
+  // The skill map and the save-state block open inside the checkpoint, in place of nothing: the
+  // thread stays where it is.
+  function toggleSheet(cp, kind) {
+    const box = checkpointBox(cp);
+    const sheet = box?.querySelector('[data-cp-sheet]');
+    if (!sheet) return;
+    const open = sheet.dataset.kind === kind && !sheet.hidden;
+    for (const b of box.querySelectorAll('[data-cp-action][aria-expanded]')) b.setAttribute('aria-expanded', String(!open && b.dataset.cpAction === kind));
+    if (open) { sheet.hidden = true; sheet.innerHTML = ''; delete sheet.dataset.kind; return; }
+    sheet.dataset.kind = kind;
+    sheet.innerHTML = kind === 'map'
+      ? renderSkillMap(skillRows(state.tutor, tracked, currentId), overallPercent(state.tutor, tracked))
+      : renderSaveState(saveState(doc.meta, tracked, state.tutor, currentId));
+    sheet.hidden = false;
+    sheet.querySelector('[data-sheet-close]')?.addEventListener('click', () => toggleSheet(cp, kind));
+    sheet.querySelector('[data-save-copy]')?.addEventListener('click', () => copySaved(sheet));
+    if (kind === 'save') copySaved(sheet);
+  }
 
-    function paintSheet() {
-      if (sheetKind === 'map') {
-        sheet.innerHTML = renderSkillMap(skillRows(state.tutor, tracked, currentId), overallPercent(state.tutor, tracked));
-        for (const link of sheet.querySelectorAll('.map a')) {
-          // At phone width the panel covers the page, so following a link has to put it away.
-          link.addEventListener('click', () => { if (isNarrow()) setChatOpen(false); });
-        }
-      } else if (sheetKind === 'save') {
-        sheet.innerHTML = renderSaveState(saveState(doc.meta, tracked, state.tutor, currentId));
-        sheet.querySelector('[data-save-copy]').addEventListener('click', copySaved);
-      }
-      sheet.querySelector('[data-sheet-close]')?.addEventListener('click', closeSheet);
+  async function copySaved(sheet) {
+    const block = sheet.querySelector('[data-save-block]');
+    const status = sheet.querySelector('[data-save-status]');
+    if (!block) return;
+    try {
+      await navigator.clipboard.writeText(block.value);
+      status.textContent = 'Copied. Paste it after /socratic-tutor resume from: in Claude Code.';
+    } catch {
+      block.select();
+      status.textContent = 'The clipboard is not available here. The text is selected: copy it by hand.';
     }
+  }
 
-    function openSheet(kind) {
-      sheetKind = kind;
-      paintSheet();
-      sheet.hidden = false;
-      threadEl('tutor').hidden = true;
-      emptyEl('tutor').hidden = true;
-      for (const btn of bar.querySelectorAll('[aria-expanded]')) {
-        btn.setAttribute('aria-expanded', String(btn.dataset.tutorAction === kind));
-      }
-      if (kind === 'save') copySaved();
-      sheet.querySelector('[data-sheet-close]').focus({ preventScroll: true });
+  function roundStep(cp, { action = 'answer', text = '' } = {}) {
+    if (!sampleFn || controller) return;
+    if (action === 'answer') {
+      const command = parseCommand(text);
+      if (command === 'progress') return toggleSheet(cp, 'map');
+      if (command === 'save') return toggleSheet(cp, 'save');
+      if (command) action = command;
     }
-
-    function closeSheet() {
-      if (!sheetKind) return;
-      const opener = bar.querySelector(`[data-tutor-action="${sheetKind}"]`);
-      sheetKind = null;
-      sheet.hidden = true;
-      sheet.innerHTML = '';
-      for (const btn of bar.querySelectorAll('[aria-expanded]')) btn.setAttribute('aria-expanded', 'false');
-      if (state.chatMode === 'tutor') {
-        threadEl('tutor').hidden = false;
-        emptyEl('tutor').hidden = state.tutor.thread.length > 0 || threadEl('tutor').childElementCount > 0;
-        opener?.focus({ preventScroll: true });
-      }
+    const before = state.tutor;
+    if ((action === 'tell' || action === 'harder' || action === 'easier') && !before.pending) action = 'start';
+    let round = roundOf(cp);
+    if (action === 'start') {
+      // A new round after a finished one starts a fresh thread; levels carry on.
+      round = { ...(round.finished ? createRound() : round), active: true, skipped: false, finished: false };
+      state.rounds[cp.id] = round;
+      persist();
+      repaintCheckpoint(cp);
     }
+    const box = checkpointBox(cp);
+    if (!box) return;
+    const surface = checkpointSurface(box);
+    surface.thread.hidden = false;
+    const said = { start: 'Quiz me on this part.', tell: 'Just tell me.', harder: 'Harder.', easier: 'Easier.' }[action] ?? text;
+    const asked = { role: 'user', content: said };
+    const lastQuestion = round.thread.findLast(t => t.role === 'assistant')?.content ?? '';
+    signalsInFlight = [];
 
-    async function copySaved() {
-      const block = sheet.querySelector('[data-save-block]');
-      const status = sheet.querySelector('[data-save-status]');
-      if (!block) return;
-      try {
-        await navigator.clipboard.writeText(block.value);
-        status.textContent = 'Copied. Paste it after /socratic-tutor resume from: in Claude Code.';
-      } catch {
-        block.select();
-        status.textContent = 'The clipboard is not available here. The text is selected: copy it by hand.';
-      }
-    }
-
-    function tutorStep({ action = 'answer', text = '' } = {}) {
-      if (!sampleFn || controller) return;
-      const focus = currentId;
-      if (!byId.has(focus)) return;
+    return exchange(surface, asked, async ({ signal, tier, answerEl, status }) => {
+      let step;
       if (action === 'answer') {
-        const command = parseCommand(text);
-        if (command === 'progress') return openSheet('map');
-        if (command === 'save') return openSheet('save');
-        if (command) action = command;
-      }
-      const before = state.tutor;
-      if (action === 'tell' && !before.pending) action = 'open';
-      const pretest = action === 'pretest' ? before.pretests[focus] : null;
-      const said = pretest ? `My prediction: ${pretest.guess}`
-        : { open: 'Quiz me on this section.', tell: 'Just tell me.', harder: 'Harder.', easier: 'Easier.' }[action] ?? text;
-      const asked = { role: 'user', content: said, section: focus };
-      const lastQuestion = before.thread.findLast(t => t.role === 'assistant')?.content ?? '';
-      closeSheet();
-      signalsInFlight = [];
-
-      return exchange('tutor', asked, async ({ signal, tier, answerEl, status }) => {
-        let step;
-        if (action === 'answer') {
-          // The answer is graded first, into JSON, and the transition function decides what that
-          // grade means. Claude then only words the move it is handed.
-          let raw = null;
-          if (before.pending) {
-            status('Checking your answer');
-            try {
-              raw = await sampleFn.json(
-                gradePrompt(doc.meta, byId.get(before.pending.node), lastQuestion, text, before.pending.kind),
-                { signal, modelTier: tier, cache: false });
-            } catch (e) {
-              if (e?.code !== 'invalid_json') throw e; // an unreadable grade is no grade
-            }
-            status('Thinking');
+        // The answer is graded first, into JSON, and the transition function decides what that
+        // grade means. Claude then only words the move it is handed.
+        let raw = null;
+        if (before.pending) {
+          status('Checking your answer');
+          try {
+            raw = await sampleFn.json(
+              gradePrompt(doc.meta, byId.get(before.pending.node), lastQuestion, text, before.pending.kind),
+              { signal, modelTier: tier, cache: false });
+          } catch (e) {
+            if (e?.code !== 'invalid_json') throw e; // an unreadable grade is no grade
           }
-          step = applyAssessment(before, validateAssessment(raw), { focus, order });
-        } else if (action === 'tell') step = tellMove(before, focus);
-        else if (action === 'harder' || action === 'easier') step = difficultyMove(before, action === 'harder' ? 1 : -1, focus);
-        else if (action === 'pretest') step = pretestMove(before, focus);
-        else step = openMove(before, focus);
+          status('Thinking');
+        }
+        step = before.pending ? applyRound(before, round, validateAssessment(raw), { cp, order }) : startRound(before, round, cp);
+      } else if (action === 'tell') step = { ...tellMove(before, before.pending.node), round };
+      else if (action === 'harder' || action === 'easier') step = { ...difficultyMove(before, action === 'harder' ? 1 : -1, before.pending.node), round };
+      else step = startRound(before, round, cp);
 
-        const target = byId.get(step.move.node);
-        const hits = searchChunks(chunks, `${target.title} ${action === 'answer' ? text : ''}`, 3);
-        const turns = tutorTurns(doc.meta, target, before.thread, said, step.move, {
-          catalog: catalog(sources),
-          excerpts: formatExcerpts(hits),
-          difficulty: step.tutor.difficulty,
-          answered: before.pending ? byId.get(before.pending.node) : null,
-          guess: pretest?.guess,
-          question: pretest?.question,
-          diagnostic: diagnosticLine(doc),
-          titleOf: (id) => byId.get(id)?.title ?? id,
-          weak: weakestAreas(step.tutor, tracked),
-          maxBytes,
-        });
-        return {
-          turns,
-          // Only sources the tutor actually opened are listed under its message: a line of
-          // retrieved labels under every question would be something after the question.
-          used: new Set(),
-          commit: (entry) => {
-            // Quiz clicks and pretests that landed while the reply was streaming changed the live
-            // state, not the copy this step was computed from. Carry them over.
-            let next = step.tutor;
-            for (const s of signalsInFlight ?? []) next = applyPageSignal(next, s.nodeId, s.signal).tutor;
-            next = { ...next, pretests: { ...next.pretests, ...state.tutor.pretests }, pretestOff: state.tutor.pretestOff };
-            const notes = step.changes.map(c => ({ role: 'note', content: levelChangeCopy(c, byId.get(c.node)?.title ?? c.node) }));
-            for (const n of notes) addTurn(n, 'tutor', { before: answerEl });
-            state.tutor = { ...next, thread: appendTurns(before.thread, asked, ...notes, entry) };
-            paintTree();
-          },
-        };
-      }).finally(() => { signalsInFlight = null; });
-    }
-
-    tutorApi = {
-      step: tutorStep,
-      // Open the panel on the tutor without moving keyboard focus out of the page.
-      show({ focus = true } = {}) { setChatOpen(true, { focus }); setMode('tutor'); },
-      refresh() { if (sheetKind) paintSheet(); },
-    };
-    setMode(state.chatMode);
+      const target = byId.get(step.move.node);
+      const hits = searchChunks(chunks, `${target.title} ${action === 'answer' ? text : ''}`, 3);
+      const turns = tutorTurns(doc.meta, target, round.thread, said, step.move, {
+        catalog: catalog(sources),
+        excerpts: formatExcerpts(hits),
+        difficulty: step.tutor.difficulty,
+        answered: before.pending ? byId.get(before.pending.node) : null,
+        diagnostic: diagnosticLine(doc),
+        titleOf: (id) => byId.get(id)?.title ?? id,
+        weak: weakestAreas(step.tutor, tracked),
+        maxBytes,
+      });
+      return {
+        turns,
+        // Only sources the tutor actually opened are listed under its message: a line of
+        // retrieved labels under every question would be something after the question.
+        used: new Set(),
+        commit: (entry) => {
+          // Quiz clicks and pretests that landed while the reply was streaming changed the live
+          // state, not the copy this step was computed from. Carry them over.
+          let next = step.tutor;
+          for (const s of signalsInFlight ?? []) next = applyPageSignal(next, s.nodeId, s.signal).tutor;
+          next = { ...next, pretests: { ...next.pretests, ...state.tutor.pretests }, pretestOff: state.tutor.pretestOff };
+          const notes = step.changes.map(c => ({ role: 'note', content: levelChangeCopy(c, byId.get(c.node)?.title ?? c.node) }));
+          for (const n of notes) addTurn(n, surface, { before: answerEl });
+          state.tutor = next;
+          const finished = step.round.finished;
+          state.rounds[cp.id] = { ...step.round, active: !finished, thread: appendTurns(round.thread, asked, ...notes, entry) };
+          paintTree();
+          if (finished) { persist(); repaintCheckpoint(cp); }
+        },
+      };
+    }).finally(() => { signalsInFlight = null; });
   }
 
   function showFeedback(section, correct, explanation, why) {

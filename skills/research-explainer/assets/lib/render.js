@@ -184,20 +184,54 @@ export function renderPrediction(pretest) {
   return `
     <aside class="prediction">
       <p><strong>Your prediction:</strong> ${escapeHtml(pretest.guess)}</p>
-      <button class="link-button" type="button" data-open-tutor>See what the tutor made of it</button>
+      <div class="prediction-reply" data-prediction-reply aria-live="polite">${pretest.reply ? renderProse(pretest.reply) : ''}</div>
     </aside>`;
 }
 
-// Offered where a reader naturally pauses, the end of a section, and never as a modal.
-export function renderTutorOffer() {
+// Quiz time: the tutor, inline, after a big section. Nothing is asked until the reader starts it,
+// and skipping is always one click. Its thread, controls and the skill map live inside the block.
+export function renderCheckpoint(cp, round, { titles = new Map(), levels = new Map() } = {}) {
+  const covers = cp.nodes.map(id => {
+    const lvl = levels.get(id) ?? 0;
+    return `<li>${escapeHtml(titles.get(id) ?? id)} ${renderLevel(lvl)}</li>`;
+  }).join('');
+  const state = round.skipped ? 'skipped' : round.finished ? 'finished' : round.active ? 'running' : 'idle';
+  const lead = {
+    idle: `A few questions on what you just read, one per section. Skip it if you have it.`,
+    running: '',
+    finished: 'Round done. A level rises after two right answers on a section, one of them without help, so levels move over rounds.',
+    skipped: 'Skipped.',
+  }[state];
   return `
-    <aside class="tutor-offer">
-      <p>Read it? Find out whether it stuck. The tutor asks one question at a time and tracks what you can actually do.</p>
-      <button class="self-check" type="button" data-tutor-offer>Quiz me on this section</button>
-    </aside>`;
+    <section class="checkpoint" data-checkpoint="${escapeHtml(cp.id)}" data-state="${state}" aria-label="Quiz time: ${escapeHtml(cp.title)}">
+      <header class="checkpoint-head">
+        <h3>Quiz time <span class="checkpoint-title">· ${escapeHtml(cp.title)}</span></h3>
+        ${state === 'running' ? '<button class="link-button" type="button" data-cp-skip>Skip</button>' : ''}
+      </header>
+      ${lead ? `<p class="checkpoint-lead">${escapeHtml(lead)}</p>` : ''}
+      ${state === 'idle' || state === 'finished' ? `<ul class="checkpoint-covers">${covers}</ul>` : ''}
+      <div class="thread checkpoint-thread" data-cp-thread aria-live="polite"${state === 'running' || state === 'finished' ? '' : ' hidden'}></div>
+      <div class="checkpoint-sheet" data-cp-sheet hidden></div>
+      ${state === 'running' ? `
+      <form class="composer" data-cp-form>
+        <textarea data-cp-input rows="1" placeholder="Answer the tutor…" aria-label="Answer the tutor"></textarea>
+        <button type="submit" data-cp-send>Send</button>
+      </form>
+      <div class="checkpoint-actions" role="group" aria-label="Quiz actions">
+        <button class="chip" type="button" data-cp-action="tell" title="Answer the current question directly, this once">Just tell me</button>
+        <button class="chip" type="button" data-cp-action="easier">Easier</button>
+        <button class="chip" type="button" data-cp-action="harder">Harder</button>
+        <button class="chip" type="button" data-cp-action="map" aria-expanded="false">Progress</button>
+        <button class="chip" type="button" data-cp-action="save" aria-expanded="false">Save state</button>
+      </div>` : `
+      <div class="checkpoint-actions">
+        <button class="self-check" type="button" data-cp-start>${state === 'finished' ? 'Another round' : state === 'skipped' ? 'Start quiz time' : 'Start'}</button>
+        ${state === 'idle' ? '<button class="link-button" type="button" data-cp-skip>Skip</button>' : ''}
+      </div>`}
+    </section>`;
 }
 
-// The full skill map, shown in the panel on demand.
+// The full skill map, shown inside a checkpoint on demand.
 export function renderSkillMap(rows, overall) {
   const items = rows.map(r => `
       <li class="map-row${r.focus ? ' is-focus' : ''}" data-depth="${Math.min(r.depth, 2)}">
@@ -225,8 +259,9 @@ export function renderSaveState(text) {
     <button class="self-check" type="button" data-save-copy>Copy to clipboard</button>`;
 }
 
-// `pretest` (a question) replaces the body with the prediction card; `prediction` and `offer` add
-// the tutor's inline pieces. With none of them the node renders exactly as it always has.
+// `pretest` (a question) replaces the body with the prediction card; `prediction` keeps the
+// reader's guess and the tutor's note in view; `checkpoint` is the quiz-time block that closes a
+// big section. With none of them the node renders exactly as it always has.
 // One drawing: Mermaid source (drawn in the page by explainer.js) or hand-drawn inline SVG.
 function renderDrawing(d, { deferred = false } = {}) {
   if (d.mermaid) {
@@ -281,7 +316,7 @@ export function renderNodeSources(node) {
   return items.length ? `<p class="node-sources">From ${items.join(' · ')}</p>` : '';
 }
 
-export function renderNode(node, { reaskOf = null, pretest = null, prediction = null, offer = false } = {}) {
+export function renderNode(node, { reaskOf = null, pretest = null, prediction = null, checkpoint = '' } = {}) {
   const reask = reaskOf ? `
     <aside class="reask" data-reask="${escapeHtml(reaskOf.id)}">
       <p>Back to a question you missed earlier: <strong>${escapeHtml(reaskOf.title)}</strong>.</p>
@@ -341,7 +376,7 @@ export function renderNode(node, { reaskOf = null, pretest = null, prediction = 
       </details>` : ''}
       ${wrongTurn}
       ${renderQuiz(node)}
-      ${offer ? renderTutorOffer() : ''}
+      ${checkpoint}
     </article>`;
 }
 
@@ -350,7 +385,7 @@ export function renderNode(node, { reaskOf = null, pretest = null, prediction = 
 // show an affordance that cannot work.
 // With `tutor` the same panel carries two modes, each with its own thread, so switching is one
 // click and loses nothing. Without it the markup is exactly the Ask-only panel.
-export function renderChat({ sourceCount = 0, tier = 'default', tutor = false } = {}) {
+export function renderChat({ sourceCount = 0, tier = 'default' } = {}) {
   const chips = QUICK_PROMPTS
     .map(p => `<button class="chip" type="button" data-quick="${escapeHtml(p)}">${escapeHtml(p)}</button>`)
     .join('');
@@ -363,10 +398,7 @@ export function renderChat({ sourceCount = 0, tier = 'default', tutor = false } 
   return `
     <header class="chat-head">
       <div class="chat-title">
-        ${tutor ? `<div class="chat-modes" role="group" aria-label="Chat mode">
-          <button class="chat-mode" type="button" data-mode="ask" aria-pressed="true">Ask</button>
-          <button class="chat-mode" type="button" data-mode="tutor" aria-pressed="false">Tutor</button>
-        </div>` : '<h3>Ask Claude</h3>'}
+        <h3>Ask Claude</h3>
         <p class="chat-about" data-chat-section></p>
       </div>
       <div class="chat-actions">
@@ -378,20 +410,7 @@ export function renderChat({ sourceCount = 0, tier = 'default', tutor = false } 
     <div class="chat-empty" data-chat-empty>
       <p>${escapeHtml(reach)}</p>
       <div class="chips">${chips}</div>
-    </div>${tutor ? `
-    <div class="thread" data-thread="tutor" aria-live="polite" hidden></div>
-    <div class="chat-empty" data-tutor-empty hidden>
-      <p>The tutor teaches the section you are on by asking, one question at a time, and keeps a level from 0 to 5 for every section. Levels are earned: two right answers, one of them unprompted.</p>
-      <div class="chips"><button class="chip is-primary" type="button" data-tutor-start>Start on this section</button></div>
     </div>
-    <section class="tutor-sheet" data-tutor-sheet aria-label="Tutor details" hidden></section>
-    <div class="tutor-bar" data-tutor-bar role="group" aria-label="Tutor actions" hidden>
-      <button class="chip" type="button" data-tutor-action="tell" title="Answer the current question directly, this once">Just tell me</button>
-      <button class="chip" type="button" data-tutor-action="easier">Easier</button>
-      <button class="chip" type="button" data-tutor-action="harder">Harder</button>
-      <button class="chip" type="button" data-tutor-action="map" aria-expanded="false">Skill map</button>
-      <button class="chip" type="button" data-tutor-action="save" aria-expanded="false">Save state</button>
-    </div>` : ''}
     <form class="composer" data-ask-form>
       <textarea data-ask-input rows="1" placeholder="Ask about this section…" aria-label="Ask about this section"></textarea>
       <button type="submit" data-ask-send>Send</button>

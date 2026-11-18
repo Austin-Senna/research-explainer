@@ -8,7 +8,9 @@
 import { nodeContext, fitTurns, trimHistory, promptBudget } from './ask.js';
 import { linearOrder } from './tree.js';
 
-export const TUTOR_VARIANTS = ['first', 'panel', 'off'];
+// first: prediction questions before the key sections, and checkpoints between big sections.
+// checkpoints: the checkpoints alone. off: neither.
+export const TUTOR_VARIANTS = ['first', 'checkpoints', 'off'];
 export function tutorVariant(value) { return TUTOR_VARIANTS.includes(value) ? value : 'first'; }
 
 // socratic-tutor's scale, word for word.
@@ -205,9 +207,12 @@ export function pickReview(tutor, order, focus) {
   return best?.id ?? null;
 }
 
+// Moves that end on a statement, not a question: nothing is left open to answer.
+const CLOSING_MOVES = new Set(['complete', 'round-done', 'pretest']);
+
 function settle(tutor, move, changes = []) {
   tutor.pending = move.type === 'none' ? tutor.pending
-    : move.type === 'complete' ? null
+    : CLOSING_MOVES.has(move.type) ? null
     : { node: move.node, kind: move.kind };
   tutor.started = true;
   return { tutor, move, changes };
@@ -421,6 +426,92 @@ export function pretestMove(tutor, nodeId) {
   return settle(next, { type: 'pretest', node: nodeId, kind: 'check' });
 }
 
+// --- Checkpoints ---
+//
+// The tutor runs inline, in a skippable "quiz time" block after each big section, not in the chat
+// panel. A big section is a run of consecutive top-level subtrees covering at least
+// CHECKPOINT_MIN tracked nodes; a short run at the end stands alone if it has two, and otherwise
+// joins the one before. The block sits at the end of the run's last node.
+export const CHECKPOINT_MIN = 3;
+
+export function checkpointsFor(nodes) {
+  const order = linearOrder(nodes);
+  const tracked = new Set(trackedNodes(nodes).map(n => n.id));
+  const byId = new Map(nodes.map(n => [n.id, n]));
+  const rootOf = (n) => { let x = n; const seen = new Set(); while (x.parent && byId.has(x.parent) && !seen.has(x.id)) { seen.add(x.id); x = byId.get(x.parent); } return x.id; };
+  // Top-level subtrees in reading order, each with the tracked nodes it holds and its last node.
+  const subtrees = [];
+  for (const n of order) {
+    const root = rootOf(n);
+    let t = subtrees.at(-1);
+    if (!t || t.root !== root) subtrees.push(t = { root, nodes: [], last: n.id });
+    t.last = n.id;
+    if (tracked.has(n.id)) t.nodes.push(n.id);
+  }
+  const runs = [];
+  let run = null;
+  for (const t of subtrees) {
+    if (!t.nodes.length) continue;
+    run ??= { roots: [], nodes: [], anchor: null };
+    run.roots.push(t.root);
+    run.nodes.push(...t.nodes);
+    run.anchor = t.last;
+    if (run.nodes.length >= CHECKPOINT_MIN) { runs.push(run); run = null; }
+  }
+  if (run) {
+    const prev = runs.at(-1);
+    if (run.nodes.length >= 2 || !prev) runs.push(run);
+    else { prev.roots.push(...run.roots); prev.nodes.push(...run.nodes); prev.anchor = run.anchor; }
+  }
+  // The block lists the sections it covers, so the title only needs to be short.
+  return runs.map(r => ({
+    id: `cp-${r.anchor}`, anchor: r.anchor, nodes: r.nodes,
+    title: r.nodes.length === 1 ? (byId.get(r.nodes[0])?.title ?? '') : `${r.nodes.length} sections`,
+  }));
+}
+
+// A round is one pass through a checkpoint: one question per section it covers, with the usual
+// follow-ups when an answer misses. `done` holds the sections answered right in this round.
+export function createRound(saved) {
+  const r = saved && typeof saved === 'object' ? saved : {};
+  return {
+    thread: Array.isArray(r.thread) ? r.thread : [],
+    done: Array.isArray(r.done) ? r.done.filter(id => typeof id === 'string') : [],
+    finished: Boolean(r.finished),
+    skipped: Boolean(r.skipped),
+    active: Boolean(r.active),   // started and not yet finished or skipped
+  };
+}
+
+export function roundFocus(round, cp) {
+  return cp.nodes.find(id => !round.done.includes(id)) ?? null;
+}
+
+// Start (or restart) a round: the tutor's first question is on the first section not yet done.
+export function startRound(tutor, round, cp) {
+  const fresh = round.finished ? { ...createRound(), thread: round.thread } : { ...round, skipped: false };
+  const focus = roundFocus(fresh, cp) ?? cp.nodes[0];
+  return { ...openMove({ ...tutor, pending: null }, focus), round: fresh };
+}
+
+// One graded answer inside a round. The section the open question was about counts as done once
+// it is answered right; the next question moves to the next section; when none is left the round
+// closes on a statement. Reviews and the final assessment interleave exactly as elsewhere.
+export function applyRound(tutor, round, assessment, { cp, order = [] } = {}) {
+  const pending = tutor?.pending;
+  let next = round;
+  if (assessment?.result === 'correct' && pending && cp.nodes.includes(pending.node) && !round.done.includes(pending.node)) {
+    next = { ...round, done: [...round.done, pending.node] };
+  }
+  const focus = roundFocus(next, cp);
+  const step = applyAssessment(tutor, assessment, { focus: focus ?? pending?.node, order });
+  if (!focus && step.move.type === 'question' && step.move.after === 'correct') {
+    return { ...settle(step.tutor, { type: 'round-done', node: step.move.node, kind: 'check' }, step.changes), round: { ...next, finished: true } };
+  }
+  if (step.move.type === 'complete') return { ...step, round: { ...next, finished: true } };
+  return { ...step, round: next };
+}
+
 // --- Skill map ---
 
 export function skillRows(tutor, nodes, focus) {
@@ -544,7 +635,9 @@ export function moveDirective(move, { title = '', guess = '', question = '', tit
     case 'tell':
       return `The learner said "just tell me". Answer your last question directly in two to four sentences from the section. Then ask one question that re-tests the same idea from a different angle.`;
     case 'pretest':
-      return `Before reading ${about} the learner was asked to predict: "${question}". Their prediction: "${guess}". They have now been shown the section. In one or two sentences say where the prediction matches the section and where it diverges, without praise and without grading it. Then ask one question that makes them reconcile the difference, or extend the prediction if it matched.`;
+      return `Before reading ${about} the learner was asked to predict: "${question}". Their prediction: "${guess}". They have now been shown the section. In two or three plain sentences say where the prediction matches the section and where it diverges, without praise and without grading it. Do not ask a question.`;
+    case 'round-done':
+      return `Grade: CORRECT. Confirm in at most one plain sentence. That ends this quiz round. Do not ask a question.`;
     default:
       return `Ask one question on ${about}.`;
   }

@@ -2,13 +2,14 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
+  checkpointsFor, createRound, startRound, applyRound,
   trackedNodes, placement, placeTutor, diagnosticLine, weakestAreas, PLACEMENT_LEVEL,
   tutorVariant, createTutor, skillOf, levelOf, validateAssessment, canRaise, applyAssessment, applyPageSignal,
   pickReview, openMove, tellMove, difficultyMove, parseCommand, pretestQuestion, needsPretest, recordPretest,
   pretestMove, skillRows, overallPercent, levelChangeCopy, saveState, tutorTurns, gradePrompt, moveDirective,
   explainAfter, TUTOR_INSTRUCTIONS, LEVEL_NAMES,
 } from '../assets/lib/tutor.js';
-import { renderSidebar, renderChat, renderNode, renderSkillMap, renderSaveState } from '../assets/lib/render.js';
+import { renderSidebar, renderChat, renderNode, renderSkillMap, renderSaveState, renderCheckpoint } from '../assets/lib/render.js';
 import { buildHtml } from '../assets/build.mjs';
 
 const doc = () => JSON.parse(readFileSync(new URL('./fixtures/attention.nodes.json', import.meta.url)));
@@ -274,8 +275,9 @@ test('a pretest guess is never evidence and never moves a level', () => {
   const step = pretestMove(t, A);
   assert.equal(step.move.type, 'pretest');
   assert.deepEqual(step.changes, []);
+  assert.equal(step.tutor.pending, null, 'the reply to a prediction is a statement, not a question');
   // The section was just revealed, so the first right answer after it is prompted.
-  const after = applyAssessment(step.tutor, right, { focus: A, order: ids() });
+  const after = run(step.tutor, A, [right]);
   assert.deepEqual(skillOf(after.tutor, A).evidence.map(e => e.kind), ['prompted']);
 });
 
@@ -463,16 +465,10 @@ test('the closing summary names misconceptions first, then the lowest levels', (
   assert.match(moveDirective({ type: 'integrate', nodes: [A, B] }, { titleOf: (id) => `T-${id}` }), /"T-scaled-dot-product", "T-multi-head"/);
 });
 
-test('the panel carries both modes only when the tutor is built in', () => {
-  const plain = renderChat();
-  assert.ok(!plain.includes('data-mode='));
-  assert.ok(!plain.includes('data-tutor-'));
-  assert.match(plain, /<h3>Ask Claude<\/h3>/);
-  const both = renderChat({ tutor: true });
-  assert.match(both, /data-mode="ask" aria-pressed="true"/);
-  assert.match(both, /data-mode="tutor"/);
-  assert.match(both, /data-thread="tutor"/);
-  for (const action of ['tell', 'easier', 'harder', 'map', 'save']) assert.ok(both.includes(`data-tutor-action="${action}"`), action);
+test('the chat panel is Ask only: the tutor lives in quiz time', () => {
+  const html = renderChat();
+  assert.match(html, /<h3>Ask Claude<\/h3>/);
+  assert.ok(!html.includes('data-mode=') && !html.includes('data-tutor-') && !html.includes('data-thread="tutor"'));
 });
 
 test('a pretest replaces the body, and always offers a way straight to reading', () => {
@@ -481,12 +477,13 @@ test('a pretest replaces the body, and always offers a way straight to reading',
   assert.match(gated, /data-pretest-skip/);
   assert.match(gated, /Why scale\?/);
   assert.ok(!gated.includes('layer-intuition'));
-  const open = renderNode(n, { prediction: { guess: 'a <b>guess</b>' }, offer: true });
+  const open = renderNode(n, { prediction: { guess: 'a <b>guess</b>', reply: 'Close: the **scale** matters.' }, checkpoint: '<section data-checkpoint="cp-x"></section>' });
   assert.match(open, /layer-intuition/);
   assert.match(open, /Your prediction:<\/strong> a &lt;b&gt;guess/);
-  assert.match(open, /data-tutor-offer/);
+  assert.match(open, /data-prediction-reply[^>]*>[\s\S]*<strong>scale<\/strong>/);
+  assert.match(open, /data-checkpoint="cp-x"/);
   const plain = renderNode(n);
-  assert.ok(!plain.includes('data-tutor-offer') && !plain.includes('prediction') && !plain.includes('data-pretest'));
+  assert.ok(!plain.includes('data-checkpoint') && !plain.includes('prediction') && !plain.includes('data-pretest'));
 });
 
 test('the skill map and the save sheet render escaped', () => {
@@ -499,7 +496,8 @@ test('the skill map and the save sheet render escaped', () => {
 
 test('the build embeds the chosen variant, defaults to tutor-first, and rejects anything else', () => {
   assert.match(buildHtml(doc()), /window\.TUTOR = "first"/);
-  assert.match(buildHtml(doc(), null, { tutor: 'panel' }), /window\.TUTOR = "panel"/);
+  assert.match(buildHtml(doc(), null, { tutor: 'checkpoints' }), /window\.TUTOR = "checkpoints"/);
+  assert.throws(() => buildHtml(doc(), null, { tutor: 'panel' }), /--tutor must be one of/, 'the panel tutor is gone');
   assert.match(buildHtml(doc(), null, { tutor: 'off' }), /window\.TUTOR = "off"/);
   assert.throws(() => buildHtml(doc(), null, { tutor: 'loud' }), /--tutor must be one of/);
 });
@@ -511,8 +509,8 @@ test('the build command takes --tutor in any position and refuses an unknown val
   const { join } = await import('node:path');
   const fixture = new URL('./fixtures/attention.nodes.json', import.meta.url).pathname;
   const dir = mkdtempSync(join(tmpdir(), 'explainer-tutor-'));
-  execFileSync(process.execPath, ['assets/build.mjs', '--tutor', 'panel', fixture, dir]);
-  assert.match(readFileSync(join(dir, 'index.html'), 'utf8'), /window\.TUTOR = "panel"/);
+  execFileSync(process.execPath, ['assets/build.mjs', '--tutor', 'checkpoints', fixture, dir]);
+  assert.match(readFileSync(join(dir, 'index.html'), 'utf8'), /window\.TUTOR = "checkpoints"/);
   execFileSync(process.execPath, ['assets/build.mjs', fixture, dir]);
   assert.match(readFileSync(join(dir, 'index.html'), 'utf8'), /window\.TUTOR = "first"/);
   const bad = spawnSync(process.execPath, ['assets/build.mjs', fixture, dir, '--tutor', 'loud']);
@@ -530,4 +528,73 @@ test('an answer shown by the page quiz makes the next tutor answer prompted', ()
 test('the opening prediction is the authored quiz.predict', () => {
   const n = doc().nodes[1];
   assert.equal(pretestQuestion(n), n.quiz.predict);
+});
+
+// --- Quiz time ---
+
+const tree = (spec) => spec.map(([id, kind, parent = null], i) => ({ id, kind, parent, order: i + 1, title: id.toUpperCase() }));
+
+test('checkpoints group top-level sections until they cover three tracked ones', () => {
+  // The shape of the AI research agents explainer: prereqs, then six core subtrees.
+  const nodes = tree([['p1', 'prereq'], ['p2', 'prereq', 'p1'], ['q', 'core'], ['m', 'core'], ['m1', 'core', 'm'], ['m2', 'core', 'm'],
+    ['nums', 'core'], ['rpm', 'core'], ['rpm1', 'core', 'rpm'], ['con', 'core'], ['un', 'core']]);
+  const cps = checkpointsFor(nodes);
+  assert.deepEqual(cps.map(c => c.anchor), ['m2', 'rpm1', 'un']);
+  assert.deepEqual(cps[0].nodes, ['q', 'm', 'm1', 'm2']);
+  assert.equal(cps[0].title, '4 sections');
+  assert.deepEqual(cps[2].nodes, ['con', 'un'], 'a final run of two stands alone');
+});
+
+test('a final run of one joins the checkpoint before it, and support nodes never anchor one', () => {
+  const nodes = tree([['a', 'core'], ['b', 'core'], ['c', 'core'], ['d', 'core'], ['e', 'extension']]);
+  const cps = checkpointsFor(nodes);
+  assert.equal(cps.length, 1);
+  assert.deepEqual(cps[0].nodes, ['a', 'b', 'c', 'd']);
+  assert.equal(cps[0].anchor, 'd');
+  assert.deepEqual(checkpointsFor(tree([['x', 'core']])).map(c => c.nodes), [['x']], 'a lone section still gets one');
+  assert.equal(checkpointsFor(tree([['x', 'core']]))[0].title, 'X', 'a one-section checkpoint is named after it');
+});
+
+test('a round asks each section once, moves on after a right answer, and closes on a statement', () => {
+  const cp = { id: 'cp', anchor: B, nodes: [A, B], title: 'T' };
+  const order = [A, B];
+  let step = startRound(createTutor(), createRound(), cp);
+  assert.deepEqual(step.tutor.pending, { node: A, kind: 'check' });
+  step = applyRound(step.tutor, step.round, wrong, { cp, order });
+  assert.equal(step.move.type, 'narrow');
+  assert.deepEqual(step.round.done, []);
+  step = applyRound(step.tutor, step.round, right, { cp, order });
+  assert.deepEqual(step.round.done, [A]);
+  assert.deepEqual(step.tutor.pending, { node: B, kind: 'check' });
+  step = applyRound(step.tutor, step.round, right, { cp, order });
+  assert.equal(step.move.type, 'round-done');
+  assert.equal(step.round.finished, true);
+  assert.equal(step.tutor.pending, null);
+  assert.match(moveDirective(step.move, { title: 'T' }), /Do not ask a question/);
+});
+
+test('another round after a finished one starts from the first section with a fresh thread', () => {
+  const cp = { id: 'cp', anchor: B, nodes: [A, B], title: 'T' };
+  const finished = createRound({ done: [A, B], finished: true, thread: [{ role: 'assistant', content: 'q' }] });
+  const step = startRound(createTutor(), finished, cp);
+  assert.deepEqual(step.round.done, []);
+  assert.equal(step.round.finished, false);
+  assert.deepEqual(step.tutor.pending, { node: A, kind: 'check' });
+});
+
+test('the quiz-time block is idle until started, and skippable in every open state', () => {
+  const cp = { id: 'cp-x', anchor: B, nodes: [A, B], title: 'Attention' };
+  const titles = new Map([[A, 'Scaled'], [B, 'Multi']]);
+  const idle = renderCheckpoint(cp, createRound(), { titles });
+  assert.match(idle, /data-state="idle"/);
+  assert.match(idle, /data-cp-start/);
+  assert.match(idle, /data-cp-skip/);
+  assert.match(idle, /Scaled[\s\S]*Multi/);
+  assert.ok(!idle.includes('data-cp-form'), 'nothing is asked before Start');
+  const running = renderCheckpoint(cp, createRound({ active: true }), { titles });
+  assert.match(running, /data-cp-form/);
+  assert.match(running, /data-cp-skip/);
+  for (const a of ['tell', 'easier', 'harder', 'map', 'save']) assert.ok(running.includes(`data-cp-action="${a}"`), a);
+  assert.match(renderCheckpoint(cp, createRound({ finished: true }), { titles }), /Another round/);
+  assert.match(renderCheckpoint(cp, createRound({ skipped: true }), { titles }), /data-state="skipped"[\s\S]*Start quiz time/);
 });

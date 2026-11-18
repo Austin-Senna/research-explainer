@@ -224,31 +224,37 @@ The build reads `sources.json` from beside `nodes.json` and warns if it is missi
 hide themselves when it is unavailable. Open the local file, then publish the Artifact. Report both
 locations.
 
-**Tutor mode** is chosen at build time with `--tutor`, so the entry experiences can be compared:
+**The tutor** is chosen at build time with `--tutor`:
 
 ```bash
-node <base>/assets/build.mjs <nodes.json> <outDir> --tutor first   # default
-node <base>/assets/build.mjs <nodes.json> <outDir> --tutor panel
+node <base>/assets/build.mjs <nodes.json> <outDir> --tutor first         # default
+node <base>/assets/build.mjs <nodes.json> <outDir> --tutor checkpoints
 node <base>/assets/build.mjs <nodes.json> <outDir> --tutor off
 ```
 
-- `first` (default): a section that carries `quiz.predict` opens with that question in place of
-  its body; the reader answers or skips, the body appears, and the tutor follows up on the
-  prediction. Sections without one open straight into their body. The chat panel also has Tutor
-  beside Ask. Give `predict` only to the core nodes carrying the paper's mechanism or main
-  result, written so the reader can reason to a guess from the overview (`meta.claimSummary`)
-  and the node's hook alone (authoring rules §7.10).
-- `panel`: the page reads as before. The chat panel gains a second mode, Tutor, beside Ask, and
-  each section ends with an offer to be quizzed on it.
+- `first` (default): prediction questions before the key sections, and quiz time between big
+  sections. A section that carries `quiz.predict` opens with that question in place of its body;
+  the reader answers or skips, the body appears, and a short note under their guess says where it
+  matched and where it diverged. Give `predict` only to the core nodes carrying the paper's
+  mechanism or main result, answerable from the overview (`meta.claimSummary`) and the node's
+  hook alone (authoring rules §7.10).
+- `checkpoints`: quiz time only, no predictions.
 - `off`: no tutor.
 
-The tutor follows the `socratic-tutor` skill inside the page: one question at a time, a narrower
-question after a wrong answer, a direct explanation only after repeated misses, unannounced review
-of earlier sections. Every node is a subskill with a level from 0 to 5, shown in the sidebar and in
-the panel's skill map, and kept in the reader's browser. A level rises only after two right
-answers, one of them unprompted; a failed review lowers it. The page's own quiz counts for at most
-one of the two, and a prediction never counts. "Save state" copies a block to paste after
-`/socratic-tutor resume from:` in Claude Code. Without `sample` every variant is the plain page.
+**Quiz time** is a skippable block at the end of each big section: a run of top-level sections
+covering at least three core nodes. Nothing is asked until the reader presses Start. A round asks
+one question per section it covers, following the `socratic-tutor` skill: a narrower question
+after a wrong answer, a direct explanation only after repeated misses, devil's advocate on some
+right answers, unannounced review of earlier sections. It ends on a statement, and "Another round"
+starts over. The chat panel is Ask only.
+
+The skill map is the core nodes, each with a level from 0 to 5 shown in the sidebar and under
+Progress, kept in the reader's browser and placed from the Phase 3 diagnostic. A level rises only
+after two right answers, one of them unprompted; a failed review lowers it. The page's own quiz
+counts for at most one of the two, and a prediction never counts. Once every core node is at 4,
+the next right answer starts a final mixed assessment: one question per core node, then one that
+connects them. "Save state" copies a block to paste after `/socratic-tutor resume from:` in Claude
+Code. Without `sample` every variant is the plain page.
 
 ## Sharing
 

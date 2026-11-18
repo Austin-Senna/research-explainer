@@ -267,24 +267,11 @@ body.chat-open .theme-toggle { right: calc(var(--chat) + 1rem); }
 .lvl[data-lvl="5"] { --fill: 100%; }
 .tree-item .label { min-width: 0; }
 
-.chat-modes { display: inline-flex; padding: 2px; margin: 0 0 .35rem; border-radius: 8px;
-  background: var(--surface); border: 1px solid var(--border); }
-.chat-mode { font: inherit; font-size: .78rem; font-weight: 600; cursor: pointer; border: none;
-  padding: .25rem .8rem; border-radius: 6px; background: none; color: var(--ink-soft); }
-.chat-mode[aria-pressed="true"] { background: var(--accent); color: var(--bg); }
-.thread[hidden], .tutor-bar[hidden], .tutor-sheet[hidden] { display: none; }
-.chip.is-primary { background: var(--accent); color: var(--bg); border-color: var(--accent); font-weight: 600; }
-.chip.is-primary:hover { color: var(--bg); }
-.tutor-bar { display: flex; flex-wrap: wrap; gap: .35rem; margin-top: auto; padding: .55rem 1rem .5rem;
-  border-top: 1px solid var(--border); }
-.tutor-bar + .composer { margin-top: 0; }
-.tutor-bar .chip { font-size: .75rem; padding: .22rem .6rem; }
-.tutor-bar .chip[aria-expanded="true"] { border-color: var(--accent); color: var(--ink); }
+.thread[hidden], .checkpoint-sheet[hidden] { display: none; }
 .turn.note { align-self: center; font-size: .78rem; font-weight: 600; color: var(--ink);
   background: var(--surface); border: 1px solid var(--border); border-radius: 999px; padding: .2rem .75rem;
   text-align: center; }
 
-.tutor-sheet { flex: 1; min-height: 0; overflow-y: auto; padding: 1rem; }
 .sheet-head { display: flex; justify-content: space-between; align-items: center; gap: .5rem; }
 .sheet-head h4 { margin: 0; font-size: .95rem; }
 .map-overall { font-weight: 400; color: var(--ink-soft); font-size: .8rem; margin-left: .35rem; }
@@ -307,7 +294,7 @@ body.chat-open .theme-toggle { right: calc(var(--chat) + 1rem); }
 /* The tutor's pieces inside the article. */
 .pretest { border: 1px solid var(--accent); border-radius: 8px; background: var(--surface);
   padding: 1.1rem 1.2rem 1.2rem; margin: 0 0 2rem; }
-.pretest-kicker, .tutor-offer p, .prediction, .link-button { font-family: ui-sans-serif, system-ui, sans-serif; }
+.pretest-kicker, .prediction, .link-button { font-family: ui-sans-serif, system-ui, sans-serif; }
 .pretest-kicker { margin: 0 0 .4rem; font-size: .75rem; font-weight: 600; text-transform: uppercase;
   letter-spacing: .08em; color: var(--accent); }
 .pretest-q { margin: 0 0 .8rem; font-size: 1.1rem; line-height: 1.45; }
@@ -319,10 +306,27 @@ body.chat-open .theme-toggle { right: calc(var(--chat) + 1rem); }
 .prediction { border-left: 3px solid var(--accent); padding: .1rem 0 .1rem .9rem; margin: 0 0 1.6rem;
   font-size: .88rem; color: var(--ink-soft); }
 .prediction p { margin: 0; overflow-wrap: anywhere; }
-.tutor-offer { margin-top: 2.5rem; padding: 1rem 1.1rem; border: 1px dashed var(--border); border-radius: 8px; }
-.tutor-offer p { margin: 0; font-size: .9rem; color: var(--ink-soft); }
+.prediction-reply .turn { margin-top: .5rem; color: var(--ink); }
+.prediction-reply > :first-child { margin-top: .5rem; }
+
+/* Quiz time: the tutor inline, after a big section. */
+.checkpoint { margin-top: 2.5rem; padding: 1rem 1.1rem 1.1rem; border: 1px solid var(--accent);
+  border-radius: 10px; background: var(--surface); font-family: ui-sans-serif, system-ui, sans-serif; }
+.checkpoint[data-state="skipped"] { border-style: dashed; border-color: var(--border); background: none; }
+.checkpoint-head { display: flex; justify-content: space-between; align-items: baseline; gap: .75rem; }
+.checkpoint-head h3 { margin: 0; font-size: .8rem; text-transform: uppercase; letter-spacing: .08em; color: var(--accent); }
+.checkpoint-title { text-transform: none; letter-spacing: 0; color: var(--ink-soft); font-weight: 500; }
+.checkpoint-lead { margin: .5rem 0 0; font-size: .9rem; color: var(--ink-soft); }
+.checkpoint-covers { list-style: none; margin: .7rem 0 0; padding: 0; display: grid; gap: .3rem; font-size: .85rem; }
+.checkpoint-covers li { display: flex; justify-content: space-between; align-items: center; gap: .75rem; }
+.checkpoint-thread { padding: .9rem 0 .3rem; max-height: 28rem; overflow-y: auto; }
+.checkpoint .composer { margin: .4rem 0 0; }
+.checkpoint-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .35rem .6rem; margin-top: .7rem; }
+.checkpoint-actions .chip { font-size: .75rem; padding: .22rem .6rem; }
+.checkpoint-actions .chip[aria-expanded="true"] { border-color: var(--accent); color: var(--ink); }
+.checkpoint-sheet { margin-top: .8rem; padding-top: .8rem; border-top: 1px solid var(--border); }
 .node h2:focus { outline: none; }
-.chat-mode:focus-visible, .chip:focus-visible, .self-check:focus-visible, .link-button:focus-visible,
+.chip:focus-visible, .step-btn:focus-visible, .self-check:focus-visible, .link-button:focus-visible,
 .chat-icon:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0);
@@ -339,7 +343,7 @@ body.chat-open .theme-toggle { right: calc(var(--chat) + 1rem); }
 
 @media print {
   body { display: block; }
-  .sidebar, .pager, .theme-toggle, .chat, .chat-toggle, .self-check, .pretest, .tutor-offer, .link-button { display: none; }
+  .sidebar, .pager, .theme-toggle, .chat, .chat-toggle, .self-check, .pretest, .checkpoint, .link-button { display: none; }
   .node { max-width: none; page-break-after: always; }
   .feedback { display: block !important; }
 }
