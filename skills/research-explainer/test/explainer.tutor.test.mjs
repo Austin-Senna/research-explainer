@@ -541,9 +541,9 @@ test('checkpoints group top-level sections until they cover three tracked ones',
   assert.deepEqual(cps[2].nodes, ['con', 'un'], 'a final run of two stands alone');
 });
 
-test('a final run of one joins the checkpoint before it, and central nodes set the groups', () => {
+test('a final run of one gets its own quiz time, and central nodes set the groups', () => {
   const nodes = tree([['a', 'core'], ['b', 'core'], ['c', 'core'], ['d', 'extension']]);
-  assert.deepEqual(checkpointsFor(nodes).map(c => c.nodes), [['a', 'b', 'c']], 'b+a make two, c joins them');
+  assert.deepEqual(checkpointsFor(nodes).map(c => c.anchor), ['b', 'c'], 'a short last run stands alone, right after its section');
   const marked = tree([['a', 'core'], ['b', 'core'], ['c', 'core'], ['d', 'core']]).map(n => ({ ...n, central: ['b', 'd'].includes(n.id) }));
   assert.deepEqual(trackedNodes(marked).map(n => n.id), ['b', 'd'], 'only central nodes are tracked');
   assert.deepEqual(checkpointsFor(marked).map(c => [c.anchor, c.nodes]), [['d', ['b', 'd']]]);

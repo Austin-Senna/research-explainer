@@ -422,8 +422,7 @@ export function pretestMove(tutor, nodeId) {
 //
 // Quiz time is a skippable block after each big section. A big section is a run of consecutive
 // top-level subtrees covering at least CHECKPOINT_MIN tracked (central) nodes; a short run at the
-// end stands alone if it has two, and otherwise joins the one before. The block sits at the end
-// of the run's last node.
+// end stands alone. The block sits at the end of the run's last node.
 export const CHECKPOINT_MIN = 2;
 // Quiz time asks the multiple-choice questions first (instant, no Claude), then this many
 // conversational questions, aimed at what the multiple choice showed was missed.
@@ -453,11 +452,9 @@ export function checkpointsFor(nodes) {
     run.anchor = t.last;
     if (run.nodes.length >= CHECKPOINT_MIN) { runs.push(run); run = null; }
   }
-  if (run) {
-    const prev = runs.at(-1);
-    if (run.nodes.length >= CHECKPOINT_MIN || !prev) runs.push(run);
-    else { prev.roots.push(...run.roots); prev.nodes.push(...run.nodes); prev.anchor = run.anchor; }
-  }
+  // A short run at the end gets its own quiz time. Folding it into the one before would move that
+  // block past sections the reader has already finished, away from what it asks about.
+  if (run) runs.push(run);
   // The block lists the sections it covers, so the title only needs to be short.
   return runs.map(r => ({
     id: `cp-${r.anchor}`, anchor: r.anchor, nodes: r.nodes,

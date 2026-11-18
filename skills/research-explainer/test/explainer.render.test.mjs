@@ -229,3 +229,7 @@ test('a wrong turn renders links and emphasis like the body does', () => {
   assert.match(html, /<p class="belief">If you think <strong>X<\/strong>/);
   assert.match(html, /<p class="correction"><a href="https:\/\/arxiv.org\/abs\/2406.03689">Vafa et al.<\/a> show otherwise/);
 });
+
+test('the chat panel carries a keyboard-focusable resize handle', () => {
+  assert.match(renderChat(), /class="chat-resize" data-chat-resize role="separator" aria-orientation="vertical"[^>]*tabindex="0"/);
+});

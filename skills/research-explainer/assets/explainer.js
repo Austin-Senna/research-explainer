@@ -6,6 +6,7 @@ import { renderSidebar, renderNode, renderMasthead, renderChat, renderProse, ren
 import { nodeContext, buildTurns, promptBudget, copyForError, isFatal, tierLabel, toolStatus, nextTier, appendTurns } from './lib/ask.js';
 import { chunkSources, searchChunks, formatExcerpts, catalog, sourceTools } from './lib/sources.js';
 import { nextReveal } from './lib/typing.js';
+import { clampChat, chatMax, chatWidthForKey, CHAT_MIN } from './lib/layout.js';
 // One import per line: the bundler strips imports line by line.
 import { tutorVariant, createTutor, levelOf, validateAssessment, applyPageSignal } from './lib/tutor.js';
 import { tellMove, difficultyMove, pretestMove, parseCommand, tutorTurns, gradePrompt } from './lib/tutor.js';
@@ -71,6 +72,9 @@ function start(doc) {
   document.getElementById('masthead').innerHTML = renderMasthead(doc.meta ?? {});
   document.getElementById('chat').innerHTML = renderChat({ sourceCount: sources.length, tier: state.modelTier });
   wireTheme();
+  wireSidebar();
+  applyChatWidth();
+  window.addEventListener('resize', () => applyChatWidth());
   render();
 
   // The chat ships hidden and the page is complete without it. Nothing is sampled
@@ -303,6 +307,71 @@ function start(doc) {
       el.href = `#${target.id}`;
       el.textContent = sel === '.prev' ? `← ${target.title}` : `${target.title} →`;
     }
+  }
+
+  // Contents fold away to a thin rail; the choice is remembered in this browser.
+  function wireSidebar() {
+    const btn = document.getElementById('sidebar-toggle');
+    const apply = () => {
+      const collapsed = Boolean(state.sidebarCollapsed);
+      document.body.classList.toggle('sidebar-collapsed', collapsed);
+      btn.setAttribute('aria-expanded', String(!collapsed));
+      btn.textContent = collapsed ? '»' : '«';
+      btn.title = collapsed ? 'Show contents' : 'Hide contents';
+      applyChatWidth();
+    };
+    btn.addEventListener('click', () => { state.sidebarCollapsed = !state.sidebarCollapsed; persist(); apply(); });
+    apply();
+  }
+
+  // The chat panel's width: dragged on its left edge or set with the arrow keys there, kept within
+  // what leaves the reading column usable, and remembered in this browser.
+  // The layout's width without the scrollbar, which innerWidth would include.
+  function viewportWidth() { return document.documentElement.clientWidth || window.innerWidth; }
+  function sidebarWidth() { return document.querySelector('.sidebar')?.getBoundingClientRect().width ?? 0; }
+  function applyChatWidth(width = state.chatWidth) {
+    const w = clampChat(width, viewportWidth(), sidebarWidth());
+    if (w === null) { document.documentElement.style.removeProperty('--chat'); return null; }
+    document.documentElement.style.setProperty('--chat', `${w}px`);
+    const handle = document.querySelector('[data-chat-resize]');
+    if (handle) {
+      handle.setAttribute('aria-valuenow', String(w));
+      handle.setAttribute('aria-valuemin', String(CHAT_MIN));
+      handle.setAttribute('aria-valuemax', String(chatMax(viewportWidth(), sidebarWidth())));
+    }
+    return w;
+  }
+  function wireChatResize() {
+    const handle = document.querySelector('[data-chat-resize]');
+    const chat = document.getElementById('chat');
+    if (!handle) return;
+    const current = () => chat.getBoundingClientRect().width;
+    handle.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      handle.setPointerCapture(e.pointerId);
+      document.body.classList.add('is-resizing');
+      const move = (ev) => { state.chatWidth = applyChatWidth(viewportWidth() - ev.clientX) ?? state.chatWidth; };
+      const up = () => {
+        handle.removeEventListener('pointermove', move);
+        document.body.classList.remove('is-resizing');
+        persist();
+      };
+      handle.addEventListener('pointermove', move);
+      handle.addEventListener('pointerup', up, { once: true });
+      handle.addEventListener('pointercancel', up, { once: true });
+    });
+    handle.addEventListener('keydown', (e) => {
+      const w = chatWidthForKey(current(), e.key, { shift: e.shiftKey, viewport: viewportWidth(), sidebar: sidebarWidth() });
+      if (w === null) return;
+      // The page's own arrow keys move between sections; on the handle they only resize.
+      e.preventDefault();
+      e.stopPropagation();
+      state.chatWidth = applyChatWidth(w);
+      persist();
+    });
+    // Double-click puts it back to the default width.
+    handle.addEventListener('dblclick', () => { delete state.chatWidth; persist(); applyChatWidth(); });
+    applyChatWidth();
   }
 
   function wireTheme() {
@@ -585,6 +654,7 @@ function start(doc) {
     };
 
     restoreThread(surface, state.chat);
+    wireChatResize();
     toggle.addEventListener('click', () => setChatOpen(panel.hidden));
     panel.querySelector('[data-chat-close]').addEventListener('click', () => setChatOpen(false));
     panel.querySelector('[data-chat-clear]').addEventListener('click', () => {

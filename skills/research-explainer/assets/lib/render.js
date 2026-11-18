@@ -414,6 +414,7 @@ export function renderChat({ sourceCount = 0, tier = 'default' } = {}) {
     ? `Claude can search and read the ${sourceCount} source${sourceCount === 1 ? '' : 's'} this explainer was built from.`
     : 'Claude sees this section.';
   return `
+    <div class="chat-resize" data-chat-resize role="separator" aria-orientation="vertical" aria-label="Resize the chat panel" tabindex="0"></div>
     <header class="chat-head">
       <div class="chat-title">
         <h3>Ask Claude</h3>

@@ -17,6 +17,7 @@ const MODULES = [
   'lib/ask.js',
   'lib/tutor.js',
   'lib/render.js',
+  'lib/layout.js',
   'explainer.js',
 ];
 

@@ -10,7 +10,8 @@ function fakeDom(nodes) {
   const el = () => {
     const e = {
       textContent: '', innerHTML: '', href: '', hidden: false, disabled: false, value: '',
-      className: '', dataset: {}, style: {},
+      className: '', dataset: {}, style: { setProperty() {}, removeProperty() {} },
+      setAttribute() {}, getAttribute: () => null, removeAttribute() {}, setPointerCapture() {},
       classList: { add() {}, remove() {}, toggle() {}, contains: () => false },
       addEventListener() {}, removeEventListener() {}, append() {}, remove() {},
       closest: () => null, matches: () => false, getBoundingClientRect: () => ({ width: 0, height: 0 }),
@@ -22,6 +23,7 @@ function fakeDom(nodes) {
   };
   const doc = el();
   doc.documentElement = el();
+  doc.documentElement.clientWidth = 1400;
   doc.getElementById = () => el();
   doc.createElement = () => el();
   doc.body = el();
@@ -34,7 +36,7 @@ function runBundle(nodes, tutor = null, hash = '') {
   const errors = [];
   const win = {
     NODES: nodes, TUTOR: tutor,
-    addEventListener() {}, scrollTo() {},
+    addEventListener() {}, scrollTo() {}, innerWidth: 1400,
     matchMedia: () => ({ matches: false }),
     localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
   };
